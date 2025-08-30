@@ -267,10 +267,8 @@ class KasController extends Controller
 
             $balance = $totalIncome - $totalExpense;
 
-            // Count total active members
-            $totalMembers = Member::where('eschool_id', $eschool->id)
-                ->where('is_active', true)
-                ->count();
+            // Count total active members using many-to-many relationship
+            $totalMembers = $eschool->members()->where('is_active', true)->count();
 
             // Current month payment statistics
             $currentMonth = date('n');
@@ -340,10 +338,8 @@ class KasController extends Controller
         return response()->json(['message' => 'Eschool tidak ditemukan untuk user ini'], 404);
     }
 
-    // Cek jika member terkait eschool
-    $member = Member::where('id', $request->member_id)
-        ->where('eschool_id', $eschool->id)
-        ->first();
+    // Cek jika member terkait eschool menggunakan relasi many-to-many
+    $member = $eschool->members()->where('members.id', $request->member_id)->first();
 
     if (!$member) {
         return response()->json(['exists' => false, 'message' => 'Member tidak terdaftar di eschool ini'], 422);

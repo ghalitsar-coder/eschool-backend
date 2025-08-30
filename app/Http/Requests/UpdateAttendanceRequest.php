@@ -21,6 +21,21 @@ class UpdateAttendanceRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'member_id' => [
+                'sometimes', 
+                'exists:members,id',
+                function ($attribute, $value, $fail) {
+                    // Custom validation to check if member belongs to the eschool of the attendance record
+                    $attendance = $this->route('attendance');
+                    if ($attendance && $value) {
+                        // If member_id is being updated, check if it belongs to the eschool
+                        $eschool = $attendance->eschool;
+                        if ($eschool && !$eschool->members()->where('members.id', $value)->exists()) {
+                            $fail('The selected member is not associated with the given eschool.');
+                        }
+                    }
+                }
+            ],
             'is_present' => ['sometimes', 'boolean'],
             'notes' => ['nullable', 'string', 'max:500'],
             'date' => ['sometimes', 'date'],

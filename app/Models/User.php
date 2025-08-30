@@ -23,6 +23,7 @@ class User extends Authenticatable implements JWTSubject
         'email',
         'password',
         'role',
+        'school_id',
     ];
 
     /**
@@ -113,22 +114,36 @@ class User extends Authenticatable implements JWTSubject
             'email' => $this->email,
         ];
     }
-    public function eschool()
+    
+    // Eschool relationships
+    public function coordinatedEschool()
     {
-        return $this->hasOne(Eschool::class);
+        return $this->hasOne(Eschool::class, 'coordinator_id');
     }
 
-    public function member()
-        {
-            return $this->hasOne(Member::class);
-        }
-    public function coordinatedEschool()
-        {
-            return $this->hasOne(Eschool::class, 'coordinator_id');
-        }
-
     public function treasurerEschool()
-        {
-            return $this->hasOne(Eschool::class, 'treasurer_id');
-        }
+    {
+        return $this->hasOne(Eschool::class, 'treasurer_id');
+    }
+    
+    // School relationship (for staff)
+    public function school()
+    {
+        return $this->belongsTo(School::class);
+    }
+    
+    // Member relationship (if user is a member)
+    public function member()
+    {
+        return $this->hasOne(Member::class);
+    }
+    
+    // Multiple eschools where user is a member
+    public function memberEschools()
+    {
+        return $this->hasManyThrough(Eschool::class, Member::class, 'user_id', 'id', 'id', 'school_id')
+                   ->join('eschool_member', 'eschools.id', '=', 'eschool_member.eschool_id')
+                   ->join('members', 'eschool_member.member_id', '=', 'members.id')
+                   ->where('members.user_id', '=', $this->id);
+    }
 }

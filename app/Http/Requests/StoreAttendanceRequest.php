@@ -4,6 +4,7 @@ namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use App\Models\Eschool;
 
 class StoreAttendanceRequest extends FormRequest
 {
@@ -25,7 +26,19 @@ class StoreAttendanceRequest extends FormRequest
             'eschool_id' => ['required',  'exists:eschools,id'],
             'date' => ['required', 'date'],
             'members' => ['required', 'array', 'min:1'],
-            'members.*.member_id' => ['required',  'exists:members,id'],
+            'members.*.member_id' => [
+                'required', 
+                'exists:members,id',
+                function ($attribute, $value, $fail) {
+                    // Custom validation to check if member belongs to the given eschool
+                    $eschoolId = $this->input('eschool_id');
+                    $eschool = Eschool::find($eschoolId);
+                    
+                    if ($eschool && !$eschool->members()->where('members.id', $value)->exists()) {
+                        $fail('The selected member is not associated with the given eschool.');
+                    }
+                }
+            ],
             'members.*.is_present' => ['required', 'boolean'],
             'members.*.notes' => ['nullable', 'string', 'max:500'],
         ];

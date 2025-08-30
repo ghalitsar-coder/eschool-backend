@@ -2,12 +2,13 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Eschool extends Model
 {
+    use HasFactory;
+
     protected $fillable = [
         'school_id',
         'coordinator_id',
@@ -23,32 +24,44 @@ class Eschool extends Model
     protected $casts = [
         'schedule_days' => 'array',
         'is_active' => 'boolean',
-        'monthly_kas_amount' => 'integer',
-        'total_schedule_days' => 'integer',
     ];
 
-    public function school(): BelongsTo
+    // Define relationships
+    public function school()
     {
         return $this->belongsTo(School::class);
     }
 
-    public function coordinator(): BelongsTo
+    // Coordinator relationship (a koordinator user)
+    public function coordinator()
     {
         return $this->belongsTo(User::class, 'coordinator_id');
     }
 
-    public function treasurer(): BelongsTo
+    // Treasurer relationship (a bendahara user)
+    public function treasurer()
     {
         return $this->belongsTo(User::class, 'treasurer_id');
     }
 
-    public function members(): HasMany
+    // Define many-to-many relationship with Member
+    public function members()
     {
-        return $this->hasMany(Member::class);
+        return $this->belongsToMany(Member::class, 'eschool_member');
     }
 
-    public function kasRecords(): HasMany
+    public function kasRecords()
     {
         return $this->hasMany(KasRecord::class);
+    }
+
+    public function kasPayments()
+    {
+        return $this->hasMany(KasPayment::class);
+    }
+    
+    public function attendanceRecords()
+    {
+        return $this->hasMany(AttendanceRecord::class);
     }
 }

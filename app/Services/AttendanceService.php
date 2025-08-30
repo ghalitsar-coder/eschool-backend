@@ -15,50 +15,58 @@ class AttendanceService
      * Record attendance for multiple members.
      */
   public function recordBatchAttendance(string $eschoolId, array $attendanceData, string $recorderId): Collection
-{
-    $eschool = Eschool::findOrFail($eschoolId);
-    $date = Carbon::parse($attendanceData['date'] ?? now());
+    {
+        $eschool = Eschool::findOrFail($eschoolId);
+        $date = Carbon::parse($attendanceData['date'] ?? now());
 
-    $records = collect();
-    $errors = [];
+        $records = collect();
+        $errors = [];
 
-    foreach ($attendanceData['members'] as $memberData) {
-        $member = Member::where('eschool_id', $eschoolId)
-                        ->findOrFail($memberData['member_id']);
+        foreach ($attendanceData['members'] as $memberData) {
+            // Ensure member_id is properly cast
+            $memberId = is_string($memberData['member_id']) ? (int)$memberData['member_id'] : $memberData['member_id'];
+            
+            // Check if member is associated with the eschool using many-to-many relationship
+            $member = $eschool->members()->where('members.id', $memberId)->first();
+            
+            if (!$member) {
+                $errors[] = "Member with ID {$memberId} is not associated with this eschool.";
+                continue;
+            }
 
-        // Check if attendance already exists for this date
-        $existingRecord = AttendanceRecord::where('eschool_id', $eschoolId)
-                                        ->where('member_id', $memberData['member_id'])
-                                        ->whereDate('date', $date->toDateString())
-                                        ->first();
+            // Check if attendance already exists for this date
+            $existingRecord = AttendanceRecord::where('eschool_id', $eschoolId)
+                                            ->where('member_id', $memberId)
+                                            ->whereDate('date', $date->toDateString())
+                                            ->first();
 
-        if ($existingRecord) {
-            // Kumpulkan error, jangan langsung throw
-            $name = $member->name ?? $member->student_id ?? "ID {$member->id}";
-            $errors[] = "Member {$name} sudah absen pada tanggal {$date->toDateString()}";
-            continue;
+            if ($existingRecord) {
+                // Kumpulkan error, jangan langsung throw
+                $name = $member->name ?? $member->student_id ?? "ID {$member->id}";
+                $errors[] = "Member {$name} sudah absen pada tanggal {$date->toDateString()}";
+                continue;
+            }
+
+            // Create new record
+            $record = AttendanceRecord::create([
+                'eschool_id' => $eschoolId,
+                'member_id' => $memberId,
+                'recorder_id' => $recorderId,
+                'date' => $date,
+                'is_present' => isset($memberData['is_present']) ? (bool)$memberData['is_present'] : false,
+                'notes' => $memberData['notes'] ?? null
+            ]);
+
+            $records->push($record);
         }
 
-        // Create new record
-        $record = AttendanceRecord::create([
-            'eschool_id' => $eschoolId,
-            'member_id' => $memberData['member_id'],
-            'recorder_id' => $recorderId,
-            'date' => $date,
-            'is_present' => $memberData['is_present'] ?? false,
-            'notes' => $memberData['notes'] ?? null
-        ]);
+        // Kalau ada error, lempar exception dengan gabungan semua pesan
+        if (!empty($errors)) {
+            throw new \Exception(json_encode($errors));
+        }
 
-        $records->push($record);
+        return AttendanceRecord::whereIn('id', $records->pluck('id'))->get();
     }
-
-    // Kalau ada error, lempar exception dengan gabungan semua pesan
-   if (!empty($errors)) {
-    throw new \Exception(json_encode($errors));
-}
-
-    return AttendanceRecord::whereIn('id', $records->pluck('id'))->get();
-}
 
 
 
@@ -78,7 +86,8 @@ class AttendanceService
      */
     public function getAttendanceStatistics(string $eschoolId, string $startDate, string $endDate): array
     {
-        $totalMembers = Member::where('eschool_id', $eschoolId)->count();
+        $eschool = Eschool::findOrFail($eschoolId); // To ensure eschool exists
+        $totalMembers = $eschool->members()->count();
         
         $attendanceRecords = AttendanceRecord::byEschool($eschoolId)
                                            ->byDateRange($startDate, $endDate)
@@ -152,11 +161,14 @@ class AttendanceService
      */
     public function getMembersWithoutAttendance(string $eschoolId, string $date): Collection
     {
+        $eschool = Eschool::findOrFail($eschoolId); // To ensure eschool exists
+        
         $recordedMemberIds = AttendanceRecord::byEschool($eschoolId)
                                            ->whereDate('date', $date)
                                            ->pluck('member_id');
         
-        return Member::where('eschool_id', $eschoolId)
+        // Using many-to-many relationship
+        return $eschool->members()
                     ->whereNotIn('id', $recordedMemberIds)
                     ->get();
     }

@@ -40,6 +40,36 @@ class SchoolSeeder extends Seeder
                 'phone' => '061-7366543',
                 'email' => 'info@sman5medan.sch.id',
             ],
+            [
+                'name' => 'SMA Negeri 7 Semarang',
+                'address' => 'Jl. Pemuda No. 150, Semarang',
+                'phone' => '024-3558921',
+                'email' => 'admin@sman7semarang.sch.id',
+            ],
+            [
+                'name' => 'SMA Negeri 9 Palembang',
+                'address' => 'Jl. Jendral Sudirman No. 88, Palembang',
+                'phone' => '0711-377215',
+                'email' => 'info@sman9palembang.sch.id',
+            ],
+            [
+                'name' => 'SMA Negeri 11 Makassar',
+                'address' => 'Jl. Perintis Kemerdekaan No. 100, Makassar',
+                'phone' => '0411-582347',
+                'email' => 'admin@sman11makassar.sch.id',
+            ],
+            [
+                'name' => 'SMA Negeri 4 Denpasar',
+                'address' => 'Jl. WR Supratman No. 30, Denpasar',
+                'phone' => '0361-234567',
+                'email' => 'contact@sman4denpasar.sch.id',
+            ],
+            [
+                'name' => 'SMA Negeri 6 Balikpapan',
+                'address' => 'Jl. Jenderal Sudirman No. 35, Balikpapan',
+                'phone' => '0542-765432',
+                'email' => 'info@sman6balikpapan.sch.id',
+            ],
         ];
 
         foreach ($schools as $school) {

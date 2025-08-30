@@ -4,8 +4,12 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\KasController;
 use App\Http\Controllers\MemberController;
 use App\Http\Controllers\AttendanceController;
+use App\Http\Controllers\MemberManagementController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+
+// Include debug routes
+require_once 'debug.php';
 
 Route::get('/test', function () {
     return response()->json(['message' => 'API Route Working!']);
@@ -53,13 +57,15 @@ Route::middleware('auth:api')->group(function () {
         });
     });
 
-
+    // Routes khusus bendahara & koordinator (termasuk member management)
     Route::middleware('role:bendahara,koordinator')->group(function () {
         Route::get('/members', [MemberController::class, 'index']);
-    });
-
-    // Routes khusus bendahara
-    Route::middleware('role:bendahara,koordinator')->group(function () {
+        Route::post('/members', [MemberController::class, 'store']);
+        Route::get('/members/{id}', [MemberController::class, 'show']);
+        Route::put('/members/{id}', [MemberController::class, 'update']);
+        Route::delete('/members/{id}', [MemberController::class, 'destroy']);
+        
+        // Bendahara specific routes
         Route::get('/bendahara/dashboard', function () {
             return response()->json([
                 'message' => 'Welcome to Bendahara Dashboard',
@@ -68,7 +74,6 @@ Route::middleware('auth:api')->group(function () {
         });
         
         // Kas management routes
-        // Endpoint lain seperti /kas/income, /members
         Route::get('/kas/check-payment', [KasController::class, 'checkPayment']);
         Route::get('/kas/summary', [KasController::class, 'getSummary']);
         Route::get('/kas/records', [KasController::class, 'getKasRecords']);
@@ -76,40 +81,55 @@ Route::middleware('auth:api')->group(function () {
         Route::post('/kas/expense', [KasController::class, 'storeExpense']);
     });
 
-   
     // Routes khusus koordinator
-   Route::middleware( 'role:koordinator')->group(function () {
-    
-    Route::get('/koordinator/dashboard', function () {
-        return response()->json([
-            'message' => 'Welcome to Koordinator Dashboard',
-            'access'  => 'Coordination tools'
-        ]);
-    });
+    Route::middleware('role:koordinator')->group(function () {
+        Route::get('/koordinator/dashboard', function () {
+            return response()->json([
+                'message' => 'Welcome to Koordinator Dashboard',
+                'access'  => 'Coordination tools'
+            ]);
+        });
 
-    Route::get('/koordinator/activities', function () {
-        return response()->json(['message' => 'Activity management']);
-    });
+        Route::get('/koordinator/activities', function () {
+            return response()->json(['message' => 'Activity management']);
+        });
 
-    Route::prefix('attendance')->group(function () {
-        // Get members for attendance taking
-        // Route::get('members/{eschool_id}', [MemberController::class, 'index']);
-        
-        Route::get('members/available', [AttendanceController::class, 'available']);
-        // Record attendance
-        Route::post('record', [AttendanceController::class, 'store']);
-        
-        // Get attendance records
-        Route::get('records', [AttendanceController::class, 'index']);
-        Route::get('records/{attendance}', [AttendanceController::class, 'show']);
-        
-        // Update/Delete attendance
-        Route::put('records/{attendance}', [AttendanceController::class, 'update']);
-        Route::delete('records/{attendance}', [AttendanceController::class, 'destroy']);
+        // Attendance routes
+        Route::prefix('attendance')->group(function () {
+            // Get members for attendance taking
+            Route::get('members/available', [AttendanceController::class, 'available']);
+            // Record attendance
+            Route::post('record', [AttendanceController::class, 'store']);
+            
+            // Get attendance records
+            Route::get('records', [AttendanceController::class, 'index']);
+            Route::get('records/{attendance}', [AttendanceController::class, 'show']);
+            
+            // Update/Delete attendance
+            Route::put('records/{attendance}', [AttendanceController::class, 'update']);
+            Route::delete('records/{attendance}', [AttendanceController::class, 'destroy']);
 
-        Route::get('statistics', [AttendanceController::class, 'AttendanceStatistics']);
+            // Export attendance records
+            Route::get('export/csv', [AttendanceController::class, 'exportCsv']);
+            Route::get('export/pdf', [AttendanceController::class, 'exportPdf']);
+
+            Route::get('statistics', [AttendanceController::class, 'AttendanceStatistics']);
+        });
+
+        // Member management routes
+        Route::prefix('members')->group(function () {
+            Route::get('/', [MemberManagementController::class, 'index']);
+            Route::post('/', [MemberManagementController::class, 'store']);
+            Route::get('/{id}', [MemberManagementController::class, 'show']);
+            Route::put('/{id}', [MemberManagementController::class, 'update']);
+            Route::delete('/{id}', [MemberManagementController::class, 'destroy']);
+            
+            // Helper routes
+            Route::get('/users/available', [MemberManagementController::class, 'getAvailableUsers']);
+            Route::get('/schools', [MemberManagementController::class, 'getSchools']);
+            Route::get('/eschools', [MemberManagementController::class, 'getEschools']);
+        });
     });
-});
 
     // Routes khusus staff
     Route::middleware('role:staff')->group(function () {
@@ -117,7 +137,7 @@ Route::middleware('auth:api')->group(function () {
             return response()->json([
                 'message' => 'Welcome to Staff Dashboard',
                 'access' => 'Staff administration tools'
-                  ]);
+            ]);
         });
         
         Route::get('/staff/tasks', function () {

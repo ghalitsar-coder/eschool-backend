@@ -13,6 +13,8 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Carbon\Carbon;
+use Illuminate\Http\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 
 
@@ -52,13 +54,14 @@ class AttendanceController extends Controller
                 ->byEschool($eschoolId)
                 ->byDateRange($startDate, $endDate)
                 ->orderBy('date', 'desc')
+                ->orderBy('created_at', 'desc')
                 ->paginate(15);
         } else {
             // Get attendance records for specific date
             $records = AttendanceRecord::with(['member.user', 'recorder'])
                 ->byEschool($eschoolId)
                 ->whereDate('date', $date)
-                ->orderBy('date', 'desc')
+                ->orderBy('created_at', 'desc')
                 ->paginate(15);
         }
 
@@ -91,6 +94,14 @@ class AttendanceController extends Controller
         $validatedData = $request->validated();
         $recorderId = auth()->id();
 
+        // Log the incoming data for debugging
+        \Log::info('Attendance recording request', [
+            'eschool_id' => $validatedData['eschool_id'],
+            'date' => $validatedData['date'] ?? null,
+            'members_count' => count($validatedData['members'] ?? []),
+            'members' => $validatedData['members'] ?? []
+        ]);
+
         $records = $this->attendanceService->recordBatchAttendance(
             $validatedData['eschool_id'],
             $validatedData,
@@ -104,6 +115,11 @@ class AttendanceController extends Controller
         ], 201);
 
     } catch (\Exception $e) {
+        \Log::error('Attendance recording error', [
+            'message' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ]);
+        
         $decoded = json_decode($e->getMessage(), true);
 
         return response()->json([
@@ -268,7 +284,9 @@ class AttendanceController extends Controller
             }
 
             // Get all members with their attendance status for the specified date
-            $members = Member::where('eschool_id', $eschoolId)
+            // Using many-to-many relationship
+            $eschool = Eschool::findOrFail($eschoolId);
+            $members = $eschool->members()
                            ->with(['user'])
                            ->get()
                            ->map(function ($member) use ($date) {
@@ -376,7 +394,7 @@ class AttendanceController extends Controller
     $weekStart = now()->startOfWeek(); // Monday of the current week
     $monthStart = now()->startOfMonth();
 
-    $totalMembers = Member::where('eschool_id', $request->eschool_id)->count();
+    $totalMembers = $eschool->members()->count();
 
     $todayStats = AttendanceRecord::where('eschool_id', $request->eschool_id)
         ->whereDate('date', $today->toDateString())
@@ -429,7 +447,7 @@ class AttendanceController extends Controller
         return response()->json(['message' => 'Unauthorized'], 403);
     }
 
-    $members = Member::where('eschool_id', $request->eschool_id)
+    $members = $eschool->members()
         ->with(['user'])
         ->select('id',  'student_id', 'user_id')
         ->get()
@@ -448,5 +466,87 @@ class AttendanceController extends Controller
         });
 
     return response()->json(['members' => $members]);
+}
+
+/**
+ * Export attendance records as CSV
+ */
+public function exportCsv(Request $request): StreamedResponse
+{
+    $eschoolId = $request->input('eschool_id');
+    $startDate = $request->input('start_date');
+    $endDate = $request->input('end_date');
+    
+    if (!$eschoolId) {
+        abort(400, 'Eschool ID is required');
+    }
+    
+    // Build query
+    $query = AttendanceRecord::with(['member.user', 'recorder', 'eschool'])
+        ->byEschool($eschoolId)
+        ->orderBy('date', 'desc')
+        ->orderBy('created_at', 'desc');
+        
+    if ($startDate && $endDate) {
+        $query->byDateRange($startDate, $endDate);
+    }
+    
+    $records = $query->get();
+    
+    $fileName = 'attendance_records_' . now()->format('Y-m-d_H-i-s') . '.csv';
+    
+    return response()->streamDownload(function () use ($records) {
+        $file = fopen('php://output', 'w');
+        
+        // Add CSV headers
+        fputcsv($file, [
+            'ID',
+            'Tanggal',
+            'Nama Member',
+            'ID Student',
+            'Email Member',
+            'Status Kehadiran',
+            'Catatan',
+            'Dicatat Oleh',
+            'Email Pencatat',
+            'Nama Eschool',
+            'Tanggal Dibuat',
+            'Tanggal Diupdate'
+        ]);
+        
+        // Add data rows
+        foreach ($records as $record) {
+            fputcsv($file, [
+                $record->id,
+                $record->date,
+                $record->member->user->name ?? $record->member->name ?? 'N/A',
+                $record->member->student_id ?? '',
+                $record->member->user->email ?? '',
+                $record->is_present ? 'Hadir' : 'Tidak Hadir',
+                $record->notes ?? '',
+                $record->recorder->name ?? '',
+                $record->recorder->email ?? '',
+                $record->eschool->name ?? '',
+                $record->created_at->format('Y-m-d H:i:s'),
+                $record->updated_at->format('Y-m-d H:i:s')
+            ]);
+        }
+        
+        fclose($file);
+    }, $fileName, [
+        'Content-Type' => 'text/csv',
+        'Content-Disposition' => 'attachment; filename="' . $fileName . '"',
+    ]);
+}
+
+/**
+ * Export attendance records as PDF
+ */
+public function exportPdf(Request $request)
+{
+    return response()->json([
+        'success' => false,
+        'message' => 'PDF export is not yet implemented. Please use CSV export for now.'
+    ], 400);
 }
 }

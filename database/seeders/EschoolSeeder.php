@@ -20,42 +20,64 @@ class EschoolSeeder extends Seeder
             return;
         }
 
-        // Pastikan setiap bendahara memiliki 1 eschool untuk MVP testing
-        $eschoolsData = [
-            [
-                'school_id' => $schools->first()->id,
-                'coordinator_id' => $coordinators->first()->id,
-                'treasurer_id' => $treasurers->get(0)->id, // bendahara1@example.com
-                'name' => 'Kelas XII IPA 1',
-                'description' => 'Ekstrakurikuler untuk siswa kelas XII IPA 1',
-                'monthly_kas_amount' => 25000,
-                'schedule_days' => json_encode(['monday', 'wednesday', 'friday']),
-                'total_schedule_days' => 3,
-                'is_active' => true,
-            ],
-            [
-                'school_id' => $schools->count() > 1 ? $schools->get(1)->id : $schools->first()->id,
-                'coordinator_id' => $coordinators->count() > 1 ? $coordinators->get(1)->id : $coordinators->first()->id,
-                'treasurer_id' => $treasurers->get(1)->id, // bendahara2@example.com
-                'name' => 'Kelas XI IPS 2',
-                'description' => 'Ekstrakurikuler untuk siswa kelas XI IPS 2',
-                'monthly_kas_amount' => 20000,
-                'schedule_days' => json_encode(['tuesday', 'thursday']),
-                'total_schedule_days' => 2,
-                'is_active' => true,
-            ],
-            [
-                'school_id' => $schools->count() > 2 ? $schools->get(2)->id : $schools->first()->id,
-                'coordinator_id' => $coordinators->first()->id,
-                'treasurer_id' => $treasurers->get(2)->id, // bendahara3@example.com
-                'name' => 'Kelas X MIPA 3',
-                'description' => 'Ekstrakurikuler untuk siswa kelas X MIPA 3',
-                'monthly_kas_amount' => 15000,
-                'schedule_days' => json_encode(['monday', 'thursday']),
-                'total_schedule_days' => 2,
-                'is_active' => true,
-            ],
+        // Array of realistic extracurricular activities
+        $extracurricularActivities = [
+            'Pramuka' => 'Kegiatan kepramukaan untuk pembentukan karakter dan keterampilan hidup',
+            'Olahraga Basket' => 'Ekstrakurikuler olahraga basket untuk meningkatkan kemampuan atletik',
+            'Paduan Suara' => 'Kelompok vokal yang mengembangkan kemampuan bernyanyi dan harmonisasi',
+            'Teater' => 'Kegiatan seni peran untuk mengembangkan bakat akting dan seni pertunjukan',
+            'Robotika' => 'Klub teknologi yang fokus pada pembuatan dan pemrograman robot',
+            'English Club' => 'Komunitas belajar bahasa Inggris dengan berbagai aktivitas menarik',
+            'Seni Lukis' => 'Komunitas seni rupa yang mengembangkan kemampuan menggambar dan melukis',
+            'Debat' => 'Klub debat untuk meningkatkan kemampuan berbicara dan argumentasi',
+            'Jurnalistik' => 'Klub jurnalistik untuk mengembangkan kemampuan menulis dan meliput berita',
+            'Komputer' => 'Ekstrakurikuler teknologi informasi dan pemrograman',
+            'Tari Tradisional' => 'Klub seni tari yang melestarikan budaya Indonesia',
+            'Musik' => 'Klub musik yang mengembangkan kemampuan bermain alat musik',
+            'PMR' => 'Palang Merah Remaja untuk pembentukan karakter dan keterampilan medis dasar',
+            'Olimpiade Matematika' => 'Kompetisi dan pelatihan matematika untuk olimpiade',
+            'KIR' => 'Karya Ilmiah Remaja untuk pengembangan riset dan inovasi siswa'
         ];
+
+        $eschoolsData = [];
+        
+        // Create multiple eschools per school
+        foreach ($schools as $index => $school) {
+            // Reset activities for each school to allow reuse
+            $availableActivities = $extracurricularActivities;
+            $activityKeys = array_keys($availableActivities);
+            
+            // Each school will have 3-5 eschools
+            $eschoolCount = min(rand(3, 5), count($activityKeys));
+            
+            for ($i = 0; $i < $eschoolCount; $i++) {
+                // Get a random activity
+                $randomIndex = array_rand($activityKeys);
+                $activityKey = $activityKeys[$randomIndex];
+                $description = $availableActivities[$activityKey];
+                
+                // Remove used activity to avoid duplicates in same school
+                unset($activityKeys[$randomIndex]);
+                $activityKeys = array_values($activityKeys);
+                
+                // If we run out of activities, break
+                if (empty($activityKeys)) {
+                    break;
+                }
+
+                $eschoolsData[] = [
+                    'school_id' => $school->id,
+                    'coordinator_id' => $coordinators->get($index % $coordinators->count())->id,
+                    'treasurer_id' => $treasurers->get($index % $treasurers->count())->id,
+                    'name' => $activityKey . ' - ' . $school->name,
+                    'description' => $description,
+                    'monthly_kas_amount' => rand(15000, 30000),
+                    'schedule_days' => json_encode(['monday', 'wednesday', 'friday']),
+                    'total_schedule_days' => 3,
+                    'is_active' => true,
+                ];
+            }
+        }
 
         foreach ($eschoolsData as $eschool) {
             Eschool::create($eschool);

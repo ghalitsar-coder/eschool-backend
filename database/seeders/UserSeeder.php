@@ -4,12 +4,35 @@ namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use App\Models\User;
+use App\Models\School;
 use Illuminate\Support\Facades\Hash;
 
 class UserSeeder extends Seeder
 {
     public function run()
     {
+        // Get all schools
+        $schools = School::all();
+        
+        if ($schools->isEmpty()) {
+            $this->command->warn('Make sure Schools exist before running this seeder.');
+            return;
+        }
+        
+        // Array of realistic Indonesian names for students
+        $studentNames = [
+            'Aditya Pratama', 'Budi Santoso', 'Citra Dewi', 'Dian Permata', 'Eko Prasetyo',
+            'Fitri Handayani', 'Galih Ramadhan', 'Hana Putri', 'Indra Kusuma', 'Jenny Wijaya',
+            'Kevin Sanjaya', 'Lina Marlina', 'Mega Sari', 'Nanda Kurnia', 'Oka Pradana',
+            'Putri Ayu', 'Rendi Saputra', 'Sari Indah', 'Taufik Hidayat', 'Umi Kalsum',
+            'Vina Anggraini', 'Wawan Setiawan', 'Yani Susanti', 'Zainal Abidin', 'Ayu Lestari',
+            'Bambang Widodo', 'Cinta Nurul', 'Dodi Firmansyah', 'Elisa Damayanti', 'Fajar Nugroho',
+            'Gita Savitri', 'Heru Prasetyo', 'Intan Permata', 'Joko Susilo', 'Kartika Sari',
+            'Lukman Hakim', 'Maya Indah', 'Nugroho Putra', 'Olivia Wulandari', 'Pandu Aditya',
+            'Queen Amalia', 'Rizki Ramadhan', 'Sinta Nurhaliza', 'Teguh Santoso', 'Ulfa Rahayu',
+            'Verdi Pratama', 'Wulan Sari', 'Xanana Gusmao', 'Yoga Pradana', 'Zahra Aisyah'
+        ];
+
         $users = [
             // Bendahara users untuk MVP testing
             [
@@ -51,100 +74,23 @@ class UserSeeder extends Seeder
                 'email' => 'staff1@example.com',
                 'password' => Hash::make('password'),
                 'role' => 'staff',
-            ],
-            
-            // Siswa users (banyak untuk testing)
-            [
-                'name' => 'Andi Pratama',
-                'email' => 'siswa1@example.com',
-                'password' => Hash::make('password'),
-                'role' => 'siswa',
-            ],
-            [
-                'name' => 'Sari Indah',
-                'email' => 'siswa2@example.com',
-                'password' => Hash::make('password'),
-                'role' => 'siswa',
-            ],
-            [
-                'name' => 'Rudi Hermawan',
-                'email' => 'siswa3@example.com',
-                'password' => Hash::make('password'),
-                'role' => 'siswa',
-            ],
-            [
-                'name' => 'Maya Sari',
-                'email' => 'siswa4@example.com',
-                'password' => Hash::make('password'),
-                'role' => 'siswa',
-            ],
-            [
-                'name' => 'Doni Setiawan',
-                'email' => 'siswa5@example.com',
-                'password' => Hash::make('password'),
-                'role' => 'siswa',
-            ],
-            [
-                'name' => 'Lina Marlina',
-                'email' => 'siswa6@example.com',
-                'password' => Hash::make('password'),
-                'role' => 'siswa',
-            ],
-            [
-                'name' => 'Agus Salim',
-                'email' => 'siswa7@example.com',
-                'password' => Hash::make('password'),
-                'role' => 'siswa',
-            ],
-            [
-                'name' => 'Fitri Handayani',
-                'email' => 'siswa8@example.com',
-                'password' => Hash::make('password'),
-                'role' => 'siswa',
-            ],
-            [
-                'name' => 'Hendra Gunawan',
-                'email' => 'siswa9@example.com',
-                'password' => Hash::make('password'),
-                'role' => 'siswa',
-            ],
-            [
-                'name' => 'Novi Rahayu',
-                'email' => 'siswa10@example.com',
-                'password' => Hash::make('password'),
-                'role' => 'siswa',
-            ],
-            [
-                'name' => 'Bayu Aji',
-                'email' => 'siswa11@example.com',
-                'password' => Hash::make('password'),
-                'role' => 'siswa',
-            ],
-            [
-                'name' => 'Citra Dewi',
-                'email' => 'siswa12@example.com',
-                'password' => Hash::make('password'),
-                'role' => 'siswa',
-            ],
-            [
-                'name' => 'Eko Prasetyo',
-                'email' => 'siswa13@example.com',
-                'password' => Hash::make('password'),
-                'role' => 'siswa',
-            ],
-            [
-                'name' => 'Gita Savitri',
-                'email' => 'siswa14@example.com',
-                'password' => Hash::make('password'),
-                'role' => 'siswa',
-            ],
-            [
-                'name' => 'Irfan Hakim',
-                'email' => 'siswa15@example.com',
-                'password' => Hash::make('password'),
-                'role' => 'siswa',
+                'school_id' => $schools->first()->id, // Assign staff to first school
             ],
         ];
+
+        // Add realistic student users
+        foreach ($studentNames as $index => $name) {
+            // Distribute students across schools (for demo purposes)
+            $schoolId = $schools->get($index % $schools->count())->id;
+            
+            $users[] = [
+                'name' => $name,
+                'email' => strtolower(str_replace(' ', '.', $name)) . '@example.com',
+                'password' => Hash::make('password'),
+                'role' => 'siswa',
+                'school_id' => $schoolId, // Assign students to schools
+            ];
+        }
 
         foreach ($users as $user) {
             User::create($user);
