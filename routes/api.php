@@ -5,6 +5,7 @@ use App\Http\Controllers\KasController;
 use App\Http\Controllers\MemberController;
 use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\MemberManagementController;
+use App\Http\Controllers\EschoolController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -47,6 +48,22 @@ Route::middleware('auth:api')->group(function () {
         ]);
     });
     
+    // Eschool routes (accessible by all authenticated users)
+    Route::prefix('eschools')->group(function () {
+        Route::get('/', [EschoolController::class, 'index']);
+        Route::get('/{id}', [EschoolController::class, 'show']);
+        
+        // Staff-only routes
+        Route::middleware('role:staff')->group(function () {
+            Route::post('/', [EschoolController::class, 'store']);
+            Route::put('/{id}', [EschoolController::class, 'update']);
+            Route::delete('/{id}', [EschoolController::class, 'destroy']);
+            
+            // Additional routes for staff
+            Route::get('/users/treasurers', [EschoolController::class, 'getEligibleTreasurers']);
+        });
+    });
+    
     // Routes khusus siswa
     Route::middleware(['role:siswa'])->group(function () {
         Route::get('/siswa/dashboard', function () {
@@ -55,6 +72,15 @@ Route::middleware('auth:api')->group(function () {
                 'access' => 'Siswa-specific content'
             ]);
         });
+    });
+
+    // Member profile routes (accessible by siswa, koordinator, staff)
+    Route::middleware(['role:siswa,koordinator,staff,bendahara'])->group(function () {
+        Route::get('/member/profile', [\App\Http\Controllers\MemberProfileController::class, 'getMemberProfileData']);
+        Route::get('/member/attendance', [\App\Http\Controllers\MemberProfileController::class, 'getFilteredAttendanceData']);
+        Route::get('/member/kas', [\App\Http\Controllers\MemberProfileController::class, 'getFilteredKasData']);
+        Route::get('/member/attendance/export', [\App\Http\Controllers\MemberProfileController::class, 'exportAttendanceData']);
+        Route::get('/member/kas/export', [\App\Http\Controllers\MemberProfileController::class, 'exportKasData']);
     });
 
     // Routes khusus bendahara & koordinator (termasuk member management)
@@ -77,8 +103,11 @@ Route::middleware('auth:api')->group(function () {
         Route::get('/kas/check-payment', [KasController::class, 'checkPayment']);
         Route::get('/kas/summary', [KasController::class, 'getSummary']);
         Route::get('/kas/records', [KasController::class, 'getKasRecords']);
+        Route::get('/kas/members', [KasController::class, 'getMembers']);
         Route::post('/kas/income', [KasController::class, 'storeIncome']);
         Route::post('/kas/expense', [KasController::class, 'storeExpense']);
+        Route::put('/kas/records/{id}', [KasController::class, 'update']);
+        Route::get('/kas/export/csv', [KasController::class, 'exportCsv']);
     });
 
     // Routes khusus koordinator
@@ -97,7 +126,8 @@ Route::middleware('auth:api')->group(function () {
         // Attendance routes
         Route::prefix('attendance')->group(function () {
             // Get members for attendance taking
-            Route::get('members/available', [AttendanceController::class, 'available']);
+            // Get members for attendance page
+            // Route::get('members', [AttendanceController::class, 'getMembers']);
             // Record attendance
             Route::post('record', [AttendanceController::class, 'store']);
             
@@ -108,27 +138,31 @@ Route::middleware('auth:api')->group(function () {
             // Update/Delete attendance
             Route::put('records/{attendance}', [AttendanceController::class, 'update']);
             Route::delete('records/{attendance}', [AttendanceController::class, 'destroy']);
-
+            
             // Export attendance records
             Route::get('export/csv', [AttendanceController::class, 'exportCsv']);
             Route::get('export/pdf', [AttendanceController::class, 'exportPdf']);
-
+            
+            // Analytics
+            Route::get('analytics', [AttendanceController::class, 'analytics']);
+            
             Route::get('statistics', [AttendanceController::class, 'AttendanceStatistics']);
+            Route::prefix('members')->group(function () {
+                Route::get('/', [MemberManagementController::class, 'index']);
+                Route::post('/', [MemberManagementController::class, 'store']);
+                Route::get('/available', [AttendanceController::class, 'available']);
+                Route::get('/{id}', [MemberManagementController::class, 'show']);
+                Route::put('/{id}', [MemberManagementController::class, 'update']);
+                Route::delete('/{id}', [MemberManagementController::class, 'destroy']);
+                
+                // Helper routes
+                Route::get('/users/available', [MemberManagementController::class, 'getAvailableUsers']);
+                Route::get('/schools', [MemberManagementController::class, 'getSchools']);
+                Route::get('/eschools', [MemberManagementController::class, 'getEschools']);
+            });
         });
 
         // Member management routes
-        Route::prefix('members')->group(function () {
-            Route::get('/', [MemberManagementController::class, 'index']);
-            Route::post('/', [MemberManagementController::class, 'store']);
-            Route::get('/{id}', [MemberManagementController::class, 'show']);
-            Route::put('/{id}', [MemberManagementController::class, 'update']);
-            Route::delete('/{id}', [MemberManagementController::class, 'destroy']);
-            
-            // Helper routes
-            Route::get('/users/available', [MemberManagementController::class, 'getAvailableUsers']);
-            Route::get('/schools', [MemberManagementController::class, 'getSchools']);
-            Route::get('/eschools', [MemberManagementController::class, 'getEschools']);
-        });
     });
 
     // Routes khusus staff
@@ -154,6 +188,13 @@ Route::middleware('auth:api')->group(function () {
         Route::get('/management/analytics', function () {
             return response()->json(['message' => 'Analytics dashboard']);
         });
+    });
+    
+    // Analytics routes (accessible by all authenticated users)
+    Route::prefix('analytics')->group(function () {
+        Route::get('/eschools', [\App\Http\Controllers\AnalyticsController::class, 'getEschoolAnalytics']);
+        Route::get('/financial', [\App\Http\Controllers\AnalyticsController::class, 'getFinancialAnalytics']);
+        Route::get('/attendance', [\App\Http\Controllers\AnalyticsController::class, 'getAttendanceAnalytics']);
     });
 
     // Route untuk testing semua roles

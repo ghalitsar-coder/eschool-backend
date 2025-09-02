@@ -112,6 +112,7 @@ class User extends Authenticatable implements JWTSubject
         return [
             'role' => $this->role,
             'email' => $this->email,
+            'school_id' => $this->school_id,
         ];
     }
     
@@ -121,7 +122,7 @@ class User extends Authenticatable implements JWTSubject
         return $this->hasOne(Eschool::class, 'coordinator_id');
     }
 
-    public function treasurerEschool()
+    public function treasuredEschool()
     {
         return $this->hasOne(Eschool::class, 'treasurer_id');
     }

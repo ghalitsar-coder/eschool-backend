@@ -16,6 +16,23 @@ class UpdateAttendanceRequest extends FormRequest
     }
 
     /**
+     * Prepare the data for validation.
+     */
+    protected function prepareForValidation()
+    {
+        // Convert string boolean values to actual boolean for validation
+        if ($this->has('is_present')) {
+            $isPresent = $this->input('is_present');
+            
+            if (is_string($isPresent)) {
+                $this->merge([
+                    'is_present' => in_array(strtolower($isPresent), ['1', 'true', 'on', 'yes'], true)
+                ]);
+            }
+        }
+    }
+
+    /**
      * Get the validation rules that apply to the request.
      */
     public function rules(): array
@@ -39,6 +56,12 @@ class UpdateAttendanceRequest extends FormRequest
             'is_present' => ['sometimes', 'boolean'],
             'notes' => ['nullable', 'string', 'max:500'],
             'date' => ['sometimes', 'date'],
+            'proof_document' => [
+                'nullable',
+                'file',
+                'mimes:pdf,jpg,jpeg,png',
+                'max:5120', // 5MB in kilobytes
+            ],
         ];
     }
 
@@ -52,6 +75,9 @@ class UpdateAttendanceRequest extends FormRequest
             'notes.string' => 'Notes must be a string.',
             'notes.max' => 'Notes cannot exceed 500 characters.',
             'date.date' => 'Date must be a valid date.',
+            'proof_document.file' => 'Proof document must be a file.',
+            'proof_document.mimes' => 'Proof document must be a file of type: pdf, jpg, jpeg, png.',
+            'proof_document.max' => 'Proof document may not be greater than 5MB.',
         ];
     }
 }

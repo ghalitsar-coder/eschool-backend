@@ -18,6 +18,30 @@ class StoreAttendanceRequest extends FormRequest
     }
 
     /**
+     * Prepare the data for validation.
+     */
+    protected function prepareForValidation()
+    {
+        // Convert string boolean values to actual boolean for validation
+        if ($this->has('members')) {
+            $members = $this->input('members');
+            
+            foreach ($members as $index => $member) {
+                if (isset($member['is_present'])) {
+                    // Convert "1", "0", "true", "false" strings to boolean
+                    $isPresent = $member['is_present'];
+                    
+                    if (is_string($isPresent)) {
+                        $members[$index]['is_present'] = in_array(strtolower($isPresent), ['1', 'true', 'on', 'yes'], true);
+                    }
+                }
+            }
+            
+            $this->merge(['members' => $members]);
+        }
+    }
+
+    /**
      * Get the validation rules that apply to the request.
      */
     public function rules(): array
@@ -41,6 +65,21 @@ class StoreAttendanceRequest extends FormRequest
             ],
             'members.*.is_present' => ['required', 'boolean'],
             'members.*.notes' => ['nullable', 'string', 'max:500'],
+            'members.*.proof_document' => [
+                'nullable',
+                'file',
+                'mimes:pdf,jpg,jpeg,png',
+                'max:5120', // 5MB in kilobytes
+                function ($attribute, $value, $fail) {
+                    // Only allow proof document when member is absent
+                    $index = explode('.', str_replace('members.', '', $attribute))[0];
+                    $isPresent = $this->input("members.{$index}.is_present");
+                    
+                    if ($value && $isPresent) {
+                        $fail('Proof document can only be uploaded for absent members.');
+                    }
+                }
+            ],
         ];
     }
 
@@ -63,6 +102,9 @@ class StoreAttendanceRequest extends FormRequest
             'members.*.is_present.boolean' => 'Attendance status must be true or false.',
             'members.*.notes.string' => 'Notes must be a string.',
             'members.*.notes.max' => 'Notes cannot exceed 500 characters.',
+            'members.*.proof_document.file' => 'Proof document must be a file.',
+            'members.*.proof_document.mimes' => 'Proof document must be a file of type: pdf, jpg, jpeg, png.',
+            'members.*.proof_document.max' => 'Proof document may not be greater than 5MB.',
         ];
     }
 }

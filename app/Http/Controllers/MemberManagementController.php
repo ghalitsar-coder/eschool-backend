@@ -490,7 +490,7 @@ class MemberManagementController extends Controller
             $currentUser = Auth::user();
             
             // Only koordinator and staff can manage members
-            if (!in_array($currentUser->role, ['koordinator', 'staff'])) {
+            if (!in_array($currentUser->role, ['koordinator','bendahara'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unauthorized access'
@@ -508,16 +508,7 @@ class MemberManagementController extends Controller
                     ], 400);
                 }
                 $schoolId = $eschool->school_id;
-            } elseif ($currentUser->role === 'staff') {
-                // Staff harus memiliki school_id
-                if (!$currentUser->school_id) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Staff tidak memiliki akses sekolah yang ditentukan'
-                    ], 400);
-                }
-                $schoolId = $currentUser->school_id;
-            }
+            } 
             
             // Get users who can be members (role = siswa) AND belong to the same school
             $usersQuery = User::where('role', 'siswa')

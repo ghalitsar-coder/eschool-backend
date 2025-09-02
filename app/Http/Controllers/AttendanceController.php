@@ -37,9 +37,12 @@ class AttendanceController extends Controller
 {
     try {
         $eschoolId = $request->input('eschool_id');
-        $date = $request->input('date', now()->toDateString());
+        $date = $request->input('date');
         $startDate = $request->input('start_date');
         $endDate = $request->input('end_date');
+        $search = $request->input('search');
+        $memberId = $request->input('member_id');
+        $isPresent = $request->input('is_present');
 
         if (!$eschoolId) {
             return response()->json([
@@ -48,31 +51,59 @@ class AttendanceController extends Controller
             ], 400);
         }
 
+        // Build query
+        $query = AttendanceRecord::with(['member.user', 'recorder'])
+            ->byEschool($eschoolId);
+
+        // Apply date filters
         if ($startDate && $endDate) {
-            // Get attendance records for date range
-            $records = AttendanceRecord::with(['member.user', 'recorder'])
-                ->byEschool($eschoolId)
-                ->byDateRange($startDate, $endDate)
-                ->orderBy('date', 'desc')
-                ->orderBy('created_at', 'desc')
-                ->paginate(15);
+            $query->byDateRange($startDate, $endDate);
+        } elseif ($date) {
+            $query->whereDate('date', $date);
         } else {
-            // Get attendance records for specific date
-            $records = AttendanceRecord::with(['member.user', 'recorder'])
-                ->byEschool($eschoolId)
-                ->whereDate('date', $date)
-                ->orderBy('created_at', 'desc')
-                ->paginate(15);
+            // Default to today's records if no date filter specified
+            $query->whereDate('date', now()->toDateString());
         }
+
+        // Apply search filter
+        if ($search) {
+            $query->whereHas('member', function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('student_id', 'like', "%{$search}%")
+                  ->orWhereHas('user', function ($q2) use ($search) {
+                      $q2->where('email', 'like', "%{$search}%");
+                  });
+            })->orWhere('notes', 'like', "%{$search}%");
+        }
+
+        // Apply member filter
+        if ($memberId) {
+            $query->where('member_id', $memberId);
+        }
+
+        // Apply is_present filter
+        if ($isPresent !== null) {
+            $query->where('is_present', filter_var($isPresent, FILTER_VALIDATE_BOOLEAN));
+        }
+
+        // Get records with pagination
+        $perPage = $request->input('per_page', 10); // Default 10 per page
+        $records = $query->orderBy('date', 'desc')
+            ->orderBy('created_at', 'desc')
+            ->paginate($perPage);
 
         return response()->json([
     'success' => true,
     'data' => AttendanceRecordResource::collection($records),
     'meta' => [
-        'total' => $records->count(),
-        'per_page' => $records->count(),
-        'current_page' => 1,
-        'last_page' => 1
+        'total' => $records->total(),
+        'per_page' => $records->perPage(),
+        'current_page' => $records->currentPage(),
+        'last_page' => $records->lastPage(),
+        'from' => $records->firstItem(),
+        'to' => $records->lastItem(),
+        'has_next_page' => $records->hasMorePages(),
+        'has_prev_page' => $records->currentPage() > 1
     ],
     'message' => 'Attendance records retrieved successfully'
 ]);
@@ -163,12 +194,13 @@ class AttendanceController extends Controller
             $validatedData = $request->validated();
             $validatedData['recorder_id'] = auth()->id();
 
-            $attendance->update($validatedData);
-            $attendance->load(['member', 'recorder']);
+            // Update attendance record using service
+            $updatedRecord = $this->attendanceService->updateAttendance($attendance, $validatedData);
+            $updatedRecord->load(['member', 'recorder']);
 
             return response()->json([
                 'success' => true,
-                'data' => $attendance,
+                'data' => $updatedRecord,
                 'message' => 'Attendance record updated successfully'
             ]);
 
@@ -202,34 +234,167 @@ class AttendanceController extends Controller
     }
 
     /**
-     * Get attendance AttendanceS
+     * Get comprehensive attendance analytics.
      */
-    public function statistics(Request $request): JsonResponse
+    public function analytics(Request $request): JsonResponse
     {
         try {
             $eschoolId = $request->input('eschool_id');
-            $startDate = $request->input('start_date', now()->subMonth()->toDateString());
-            $endDate = $request->input('end_date', now()->toDateString());
-
+            $period = $request->input('period', 'week'); // week, month, semester
+            
             if (!$eschoolId) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Eschool ID is required'
                 ], 400);
             }
-
-            $statistics = $this->attendanceService->getAttendanceStatistics($eschoolId, $startDate, $endDate);
-
+            
+            // Get eschool
+            $eschool = Eschool::findOrFail($eschoolId);
+            
+            // Set date range based on period
+            $endDate = now();
+            switch ($period) {
+                case 'month':
+                    $startDate = now()->subMonth();
+                    break;
+                case 'semester':
+                    $startDate = now()->subMonths(6);
+                    break;
+                case 'week':
+                default:
+                    $startDate = now()->subWeek();
+                    break;
+            }
+            
+            // Get total members in eschool
+            $totalMembers = $eschool->members()->count();
+            
+            // Get daily attendance summary
+            $dailySummary = $this->attendanceService->getDailyAttendanceSummary(
+                $eschoolId, 
+                $startDate->toDateString(), 
+                $endDate->toDateString()
+            );
+            
+            // Create complete date range
+            $dateRange = [];
+            $currentDate = clone $startDate;
+            while ($currentDate->lte($endDate)) {
+                $dateRange[] = $currentDate->copy();
+                $currentDate->addDay();
+            }
+            
+            // Enhance daily summary with missing dates
+            $enhancedDailySummary = [];
+            foreach ($dateRange as $date) {
+                $dateString = $date->toDateString();
+                $summary = $dailySummary->firstWhere('attendance_date', $dateString);
+                
+                $presentCount = $summary ? (int)$summary->present_count : 0;
+                $totalCount = $summary ? (int)$summary->total_records : 0;
+                $absentCount = $totalCount - $presentCount;
+                
+                // If no records exist for this date, assume all members are absent
+                if ($totalCount == 0 && $totalMembers > 0) {
+                    $totalCount = $totalMembers;
+                    $absentCount = $totalMembers;
+                }
+                
+                $enhancedDailySummary[] = [
+                    'date' => $dateString,
+                    'formatted_date' => $date->format('M d'),
+                    'day_name' => $date->format('l'),
+                    'present' => $presentCount,
+                    'absent' => $absentCount,
+                    'total' => $totalCount,
+                    'attendance_rate' => $totalCount > 0 ? round(($presentCount / $totalCount) * 100, 2) : 0
+                ];
+            }
+            
+            // Get member attendance rates
+            $memberAttendance = [];
+            if ($totalMembers > 0) {
+                $members = $eschool->members()->with('user')->get();
+                foreach ($members as $member) {
+                    $attendanceRecords = AttendanceRecord::where('member_id', $member->id)
+                        ->where('eschool_id', $eschoolId)
+                        ->whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
+                        ->get();
+                    
+                    $totalAttendanceDays = $attendanceRecords->count();
+                    $presentDays = $attendanceRecords->where('is_present', true)->count();
+                    
+                    $memberAttendance[] = [
+                        'id' => $member->id,
+                        'name' => $member->user->name ?? $member->name,
+                        'student_id' => $member->student_id,
+                        'present_days' => $presentDays,
+                        'total_days' => $totalAttendanceDays,
+                        'attendance_rate' => $totalAttendanceDays > 0 ? round(($presentDays / $totalAttendanceDays) * 100, 2) : 0,
+                        'status' => $member->is_active ? 'active' : 'inactive'
+                    ];
+                }
+                
+                // Sort by attendance rate (descending)
+                usort($memberAttendance, function($a, $b) {
+                    return $b['attendance_rate'] <=> $a['attendance_rate'];
+                });
+            }
+            
+            // Get weekday analysis
+            $weekdayAnalysis = [];
+            $weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+            foreach ($weekdays as $weekday) {
+                $weekdayData = array_filter($enhancedDailySummary, function($item) use ($weekday) {
+                    return date('l', strtotime($item['date'])) === $weekday;
+                });
+                
+                if (count($weekdayData) > 0) {
+                    $totalPresent = array_sum(array_column($weekdayData, 'present'));
+                    $totalRecords = array_sum(array_column($weekdayData, 'total'));
+                    $averageRate = $totalRecords > 0 ? round(($totalPresent / $totalRecords) * 100, 2) : 0;
+                    
+                    $weekdayAnalysis[] = [
+                        'day' => $weekday,
+                        'short_day' => substr($weekday, 0, 3),
+                        'average_attendance_rate' => $averageRate,
+                        'total_sessions' => count($weekdayData),
+                        'total_present' => $totalPresent,
+                        'total_possible' => $totalRecords
+                    ];
+                }
+            }
+            
+            // Overall statistics
+            $overallPresent = array_sum(array_column($enhancedDailySummary, 'present'));
+            $overallTotal = array_sum(array_column($enhancedDailySummary, 'total'));
+            $overallAttendanceRate = $overallTotal > 0 ? round(($overallPresent / $overallTotal) * 100, 2) : 0;
+            
             return response()->json([
                 'success' => true,
-                'data' => $statistics,
-                'message' => 'Attendance statistics retrieved successfully'
+                'data' => [
+                    'period' => $period,
+                    'date_range' => [
+                        'start' => $startDate->toDateString(),
+                        'end' => $endDate->toDateString()
+                    ],
+                    'overall' => [
+                        'total_members' => $totalMembers,
+                        'total_present' => $overallPresent,
+                        'total_possible' => $overallTotal,
+                        'attendance_rate' => $overallAttendanceRate
+                    ],
+                    'daily_summary' => $enhancedDailySummary,
+                    'member_attendance' => array_slice($memberAttendance, 0, 10), // Top 10 members
+                    'weekday_analysis' => $weekdayAnalysis
+                ],
+                'message' => 'Attendance analytics retrieved successfully'
             ]);
-
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Failed to retrieve attendance statistics: ' . $e->getMessage()
+                'message' => 'Failed to retrieve attendance analytics: ' . $e->getMessage()
             ], 500);
         }
     }
@@ -283,14 +448,45 @@ class AttendanceController extends Controller
                 ], 400);
             }
 
-            // Get all members with their attendance status for the specified date
-            // Using many-to-many relationship
+            // Get the eschool
             $eschool = Eschool::findOrFail($eschoolId);
+            
+            // Validate that the logged-in user has access to this eschool
+            $user = Auth::user();
+            if ($user->role === 'koordinator') {
+                // Koordinator hanya bisa mengakses eschool yang mereka koordinatori
+                if ($eschool->coordinator_id !== $user->id) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Unauthorized. You can only access your own eschool.'
+                    ], 403);
+                }
+            } elseif ($user->role === 'bendahara') {
+                // Bendahara hanya bisa mengakses eschool yang mereka bendaharai
+                if ($eschool->treasurer_id !== $user->id) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Unauthorized. You can only access your own eschool.'
+                    ], 403);
+                }
+            } elseif ($user->role !== 'staff') {
+                // Hanya staff, koordinator, dan bendahara yang bisa mengakses dengan eschool_id
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized. Only staff, coordinator, or treasurer can access members by eschool.'
+                ], 403);
+            }
+
+            // Get all members with their attendance status for the specified date
+            // Using many-to-many relationship and ensuring they're from the same school
             $members = $eschool->members()
                            ->with(['user'])
+                           ->where('is_active', true)
+                           ->where('school_id', $eschool->school_id) // Filter by school_id to ensure consistency
                            ->get()
-                           ->map(function ($member) use ($date) {
+                           ->map(function ($member) use ($date, $eschoolId) {
                                $attendance = AttendanceRecord::where('member_id', $member->id)
+                                                           ->where('eschool_id', $eschoolId)
                                                            ->whereDate('date', $date)
                                                            ->first();
                                
@@ -443,6 +639,7 @@ class AttendanceController extends Controller
     ]);
 
     $eschool = Eschool::findOrFail($request->eschool_id);
+    \Log::info('INI ESCHOOL eschool: '.$eschool);
     if (!in_array(Auth::user()->role, ['koordinator', 'staff']) || $eschool->coordinator_id !== Auth::id()) {
         return response()->json(['message' => 'Unauthorized'], 403);
     }
@@ -498,10 +695,10 @@ public function exportCsv(Request $request): StreamedResponse
     return response()->streamDownload(function () use ($records) {
         $file = fopen('php://output', 'w');
         
-        // Add CSV headers
+        // Add comprehensive CSV headers
         fputcsv($file, [
             'ID',
-            'Tanggal',
+            'Tanggal Kehadiran',
             'Nama Member',
             'ID Student',
             'Email Member',

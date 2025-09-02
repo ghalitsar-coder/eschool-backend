@@ -20,7 +20,6 @@ class Member extends Model
         'address',
         'phone',
         'email',
-        'position',
         'status',
         'is_active',
     ];

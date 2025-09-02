@@ -8,6 +8,8 @@ use App\Models\Eschool;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Http\UploadedFile;
 
 class AttendanceService
 {
@@ -47,6 +49,12 @@ class AttendanceService
                 continue;
             }
 
+            // Handle proof document upload if member is absent
+            $proofDocumentData = null;
+            if (isset($memberData['proof_document']) && $memberData['proof_document'] instanceof UploadedFile) {
+                $proofDocumentData = $this->uploadProofDocument($memberData['proof_document'], $eschoolId, $memberId, $date);
+            }
+
             // Create new record
             $record = AttendanceRecord::create([
                 'eschool_id' => $eschoolId,
@@ -54,7 +62,11 @@ class AttendanceService
                 'recorder_id' => $recorderId,
                 'date' => $date,
                 'is_present' => isset($memberData['is_present']) ? (bool)$memberData['is_present'] : false,
-                'notes' => $memberData['notes'] ?? null
+                'notes' => $memberData['notes'] ?? null,
+                'proof_document_path' => $proofDocumentData['path'] ?? null,
+                'proof_document_name' => $proofDocumentData['name'] ?? null,
+                'proof_document_type' => $proofDocumentData['type'] ?? null,
+                'proof_document_size' => $proofDocumentData['size'] ?? null,
             ]);
 
             $records->push($record);
@@ -68,7 +80,100 @@ class AttendanceService
         return AttendanceRecord::whereIn('id', $records->pluck('id'))->get();
     }
 
+    /**
+     * Update attendance record.
+     */
+    public function updateAttendance(AttendanceRecord $attendanceRecord, array $attendanceData): AttendanceRecord
+    {
+        // Handle proof document upload if provided
+        $proofDocumentData = null;
+        if (isset($attendanceData['proof_document']) && $attendanceData['proof_document'] instanceof UploadedFile) {
+            // Delete old document if exists
+            if ($attendanceRecord->proof_document_path) {
+                Storage::disk('public')->delete($attendanceRecord->proof_document_path);
+            }
+            
+            $proofDocumentData = $this->uploadProofDocument(
+                $attendanceData['proof_document'], 
+                $attendanceRecord->eschool_id, 
+                $attendanceRecord->member_id, 
+                Carbon::parse($attendanceRecord->date)
+            );
+        }
 
+        // Update record with new data
+        $updateData = [
+            'is_present' => isset($attendanceData['is_present']) ? (bool)$attendanceData['is_present'] : $attendanceRecord->is_present,
+            'notes' => $attendanceData['notes'] ?? $attendanceRecord->notes,
+        ];
+
+        // Add proof document data if uploaded
+        if ($proofDocumentData) {
+            $updateData['proof_document_path'] = $proofDocumentData['path'];
+            $updateData['proof_document_name'] = $proofDocumentData['name'];
+            $updateData['proof_document_type'] = $proofDocumentData['type'];
+            $updateData['proof_document_size'] = $proofDocumentData['size'];
+        }
+
+        $attendanceRecord->update($updateData);
+
+        return $attendanceRecord;
+    }
+
+    /**
+     * Upload proof document for absent member.
+     */
+    private function uploadProofDocument(UploadedFile $file, string $eschoolId, string $memberId, Carbon $date): array
+    {
+        // Validate file type
+        $allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'];
+        if (!in_array($file->getClientMimeType(), $allowedTypes)) {
+            throw new \Exception('Invalid file type. Only PDF, JPEG, JPG, and PNG files are allowed.');
+        }
+
+        // Validate file size (max 5MB)
+        if ($file->getSize() > 5242880) { // 5MB in bytes
+            throw new \Exception('File size exceeds 5MB limit.');
+        }
+
+        // Generate unique filename
+        $extension = $file->getClientOriginalExtension();
+        $filename = 'proof_' . $eschoolId . '_' . $memberId . '_' . $date->format('Y_m_d') . '_' . time() . '.' . $extension;
+
+        // Define storage path
+        $path = 'attendance_proofs/' . $eschoolId . '/' . $date->format('Y/m');
+
+        // Store file
+        $storedPath = $file->storeAs($path, $filename, 'public');
+
+        return [
+            'path' => $storedPath,
+            'name' => $filename,
+            'type' => $file->getClientMimeType(),
+            'size' => $file->getSize(),
+        ];
+    }
+
+    /**
+     * Delete proof document.
+     */
+    public function deleteProofDocument(AttendanceRecord $attendanceRecord): bool
+    {
+        if ($attendanceRecord->proof_document_path) {
+            Storage::disk('public')->delete($attendanceRecord->proof_document_path);
+            
+            $attendanceRecord->update([
+                'proof_document_path' => null,
+                'proof_document_name' => null,
+                'proof_document_type' => null,
+                'proof_document_size' => null,
+            ]);
+            
+            return true;
+        }
+        
+        return false;
+    }
 
     /**
      * Get attendance records for a specific date and eschool.
@@ -101,26 +206,15 @@ class AttendanceService
         
         return [
             'total_members' => $totalMembers,
-            'total_records' => $totalRecords,
             'total_present' => $totalPresent,
             'total_absent' => $totalAbsent,
-            'attendance_rate' => round($attendanceRate, 2)
+            'total_records' => $totalRecords,
+            'attendance_rate' => round($attendanceRate, 2),
+            'period' => [
+                'start_date' => $startDate,
+                'end_date' => $endDate
+            ]
         ];
-    }
-
-    /**
-     * Get member attendance history.
-     */
-    public function getMemberAttendanceHistory(string $memberId, string $startDate = null, string $endDate = null): Collection
-    {
-        $query = AttendanceRecord::with(['recorder'])
-                                ->byMember($memberId);
-        
-        if ($startDate && $endDate) {
-            $query->byDateRange($startDate, $endDate);
-        }
-        
-        return $query->orderBy('date', 'desc')->get();
     }
 
     /**
@@ -128,48 +222,45 @@ class AttendanceService
      */
     public function getDailyAttendanceSummary(string $eschoolId, string $startDate, string $endDate): Collection
     {
-        return AttendanceRecord::selectRaw('DATE(date) as attendance_date, COUNT(*) as total_records, SUM(is_present) as present_count')
-                              ->byEschool($eschoolId)
-                              ->byDateRange($startDate, $endDate)
-                              ->groupBy('attendance_date')
-                              ->orderBy('attendance_date', 'desc')
-                              ->get();
+        return AttendanceRecord::selectRaw('
+                DATE(date) as attendance_date,
+                COUNT(*) as total_records,
+                SUM(CASE WHEN is_present = 1 THEN 1 ELSE 0 END) as present_count,
+                SUM(CASE WHEN is_present = 0 THEN 1 ELSE 0 END) as absent_count
+            ')
+            ->where('eschool_id', $eschoolId)
+            ->whereBetween('date', [$startDate, $endDate])
+            ->groupBy('attendance_date')
+            ->orderBy('attendance_date')
+            ->get();
     }
 
     /**
-     * Check if attendance exists for a specific date and eschool.
+     * Get member attendance history for a date range.
      */
-    public function hasAttendanceForDate(string $eschoolId, string $date): bool
+    public function getMemberAttendanceHistory(string $memberId, string $startDate, string $endDate): Collection
     {
-        return AttendanceRecord::byEschool($eschoolId)
-                              ->whereDate('date', $date)
-                              ->exists();
+        return AttendanceRecord::with(['eschool', 'recorder'])
+            ->where('member_id', $memberId)
+            ->whereBetween('date', [$startDate, $endDate])
+            ->orderBy('date', 'desc')
+            ->get();
     }
 
     /**
-     * Delete attendance records for a specific date.
+     * Delete all attendance records for a specific date and eschool.
      */
     public function deleteAttendanceByDate(string $eschoolId, string $date): int
     {
-        return AttendanceRecord::byEschool($eschoolId)
-                              ->whereDate('date', $date)
-                              ->delete();
-    }
+        $deletedCount = AttendanceRecord::where('eschool_id', $eschoolId)
+            ->whereDate('date', $date)
+            ->count();
 
-    /**
-     * Get members who haven't been recorded for attendance on a specific date.
-     */
-    public function getMembersWithoutAttendance(string $eschoolId, string $date): Collection
-    {
-        $eschool = Eschool::findOrFail($eschoolId); // To ensure eschool exists
-        
-        $recordedMemberIds = AttendanceRecord::byEschool($eschoolId)
-                                           ->whereDate('date', $date)
-                                           ->pluck('member_id');
-        
-        // Using many-to-many relationship
-        return $eschool->members()
-                    ->whereNotIn('id', $recordedMemberIds)
-                    ->get();
+        // Delete the records
+        AttendanceRecord::where('eschool_id', $eschoolId)
+            ->whereDate('date', $date)
+            ->delete();
+
+        return $deletedCount;
     }
 }

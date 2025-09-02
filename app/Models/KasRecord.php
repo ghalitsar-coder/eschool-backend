@@ -14,6 +14,7 @@ class KasRecord extends Model
         'type',
         'amount',
         'description',
+        'category',
         'date',
     ];
 
@@ -31,8 +32,6 @@ class KasRecord extends Model
     {
         return $this->belongsTo(User::class, 'recorder_id');
     }
-
-
 
     public function kasPayments(): HasMany
     {

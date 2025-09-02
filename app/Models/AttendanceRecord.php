@@ -16,12 +16,17 @@ class AttendanceRecord extends Model
         'recorder_id',
         'date',
         'is_present',
-        'notes'
+        'notes',
+        'proof_document_path',
+        'proof_document_name',
+        'proof_document_type',
+        'proof_document_size',
     ];
 
     protected $casts = [
         'date' => 'datetime',
-        'is_present' => 'boolean'
+        'is_present' => 'boolean',
+        'proof_document_size' => 'integer',
     ];
 
     /**
@@ -86,5 +91,16 @@ class AttendanceRecord extends Model
     public function scopeAbsent($query)
     {
         return $query->where('is_present', false);
+    }
+    
+    /**
+     * Accessor untuk mendapatkan URL dokumen bukti
+     */
+    public function getProofDocumentUrlAttribute()
+    {
+        if ($this->proof_document_path) {
+            return asset('storage/' . $this->proof_document_path);
+        }
+        return null;
     }
 }
