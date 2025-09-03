@@ -24,6 +24,8 @@ class User extends Authenticatable implements JWTSubject
         'password',
         'role',
         'school_id',
+        'base_role', // Add base_role field
+        'is_system_admin', // Add is_system_admin field
     ];
 
     /**
@@ -46,6 +48,7 @@ class User extends Authenticatable implements JWTSubject
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'is_system_admin' => 'boolean', // Cast is_system_admin as boolean
         ];
     }
 
@@ -146,5 +149,49 @@ class User extends Authenticatable implements JWTSubject
                    ->join('eschool_member', 'eschools.id', '=', 'eschool_member.eschool_id')
                    ->join('members', 'eschool_member.member_id', '=', 'members.id')
                    ->where('members.user_id', '=', $this->id);
+    }
+    
+    // New multi-role relationships
+    public function eschoolRoles()
+    {
+        return $this->hasMany(UserEschoolRole::class);
+    }
+    
+    /**
+     * Check if user has a specific role in a specific eschool
+     * Used by the eschool.role middleware
+     */
+    public function hasRoleInEschool($eschoolId, $roles)
+    {
+        if (!is_array($roles)) {
+            $roles = [$roles];
+        }
+        
+        // Check if user has any of the specified roles in this eschool
+        return $this->eschoolRoles()
+            ->where('eschool_id', $eschoolId)
+            ->whereIn('role', $roles)
+            ->exists();
+    }
+    
+    /**
+     * Get all eschools data with roles and permissions for this user
+     * This method is used in AuthController for login and refresh
+     */
+    public function getEschoolsData()
+    {
+        $eschoolRoles = $this->eschoolRoles()->with(['eschool:id,name,description'])->get();
+        
+        return $eschoolRoles->map(function ($role) {
+            return [
+                'eschool_id' => $role->eschool_id,
+                'eschool_name' => $role->eschool->name ?? 'Unknown',
+                'eschool_description' => $role->eschool->description ?? '',
+                'role_in_eschool' => $role->role,
+                'role_status' => $role->status,
+                'permissions' => $role->getPermissions(),
+                'assigned_at' => $role->assigned_at,
+            ];
+        })->toArray();
     }
 }

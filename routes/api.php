@@ -12,6 +12,9 @@ use Illuminate\Support\Facades\Route;
 // Include debug routes
 require_once 'debug.php';
 
+// Include multi-role example routes
+require_once 'multi_role_examples.php';
+
 Route::get('/test', function () {
     return response()->json(['message' => 'API Route Working!']);
 });
@@ -46,6 +49,67 @@ Route::middleware('auth:api')->group(function () {
             'user' => $request->user(),
             'role' => $request->user()->role
         ]);
+    });
+    
+    // MULTI-ROLE ATTENDANCE MANAGEMENT ROUTES (Production Ready)
+    // These routes handle attendance management with proper multi-role security
+    Route::prefix('eschool/{eschool_id}')->middleware('auth:api')->group(function () {
+        // Members list for attendance (koordinator access)
+        Route::get('/members/list', [AttendanceController::class, 'getMembersList'])
+            ->middleware('eschool.role:koordinator,{eschool_id}');
+        
+        // Attendance analytics (koordinator access)
+        Route::get('/attendance/analytics', [AttendanceController::class, 'getAnalytics'])
+            ->middleware('eschool.role:koordinator,{eschool_id}');
+        
+        // Attendance statistics (koordinator access)
+        Route::get('/attendance/statistics', [AttendanceController::class, 'getStatistics'])
+            ->middleware('eschool.role:koordinator,{eschool_id}');
+        
+        // Attendance records (koordinator access)
+        Route::get('/attendance/records', [AttendanceController::class, 'getRecords'])
+            ->middleware('eschool.role:koordinator,{eschool_id}');
+        
+        // Create attendance record (koordinator access)
+        Route::post('/attendance/record', [AttendanceController::class, 'createRecord'])
+            ->middleware('eschool.role:koordinator,{eschool_id}');
+        
+        // Update attendance record (koordinator access)
+        Route::put('/attendance/records/{attendance}', [AttendanceController::class, 'update'])
+            ->middleware('eschool.role:koordinator,{eschool_id}');
+        
+        // Delete attendance record (koordinator access) - REMOVED TO AVOID CONFLICT
+        // Route::delete('/attendance/records/{attendance}', [AttendanceController::class, 'destroy'])
+        //     ->middleware('eschool.role:koordinator,{eschool_id}');
+        
+        // Export attendance CSV (koordinator access)
+        Route::get('/attendance/export/csv', [AttendanceController::class, 'exportCsv'])
+            ->middleware('eschool.role:koordinator,{eschool_id}');
+        
+        // Delete attendance record (koordinator access) - NEW ROUTE
+        Route::delete('/attendance/records/{recordId}', [AttendanceController::class, 'destroyRecord'])
+            ->middleware('eschool.role:koordinator,{eschool_id}');
+            
+        // MULTI-ROLE MEMBER MANAGEMENT ROUTES
+        // Get members for management (koordinator access)
+        Route::get('/members/manage', [App\Http\Controllers\MultiRoleMemberController::class, 'index'])
+            ->middleware('eschool.role:koordinator,{eschool_id}');
+            
+        // Get available users for assignment to this eschool
+        Route::get('/users/available-for-eschool', [App\Http\Controllers\MultiRoleMemberController::class, 'getAvailableUsers'])
+            ->middleware('eschool.role:koordinator,{eschool_id}');
+            
+        // Assign role to user in this eschool
+        Route::post('/members/assign-role', [App\Http\Controllers\MultiRoleMemberController::class, 'assignRole'])
+            ->middleware('eschool.role:koordinator,{eschool_id}');
+            
+        // Update user role in this eschool
+        Route::put('/members/{user_id}/update-role', [App\Http\Controllers\MultiRoleMemberController::class, 'updateRole'])
+            ->middleware('eschool.role:koordinator,{eschool_id}');
+            
+        // Remove user role from this eschool
+        Route::delete('/members/{user_id}/remove-role', [App\Http\Controllers\MultiRoleMemberController::class, 'removeRole'])
+            ->middleware('eschool.role:koordinator,{eschool_id}');
     });
     
     // Eschool routes (accessible by all authenticated users)
@@ -135,9 +199,14 @@ Route::middleware('auth:api')->group(function () {
             Route::get('records', [AttendanceController::class, 'index']);
             Route::get('records/{attendance}', [AttendanceController::class, 'show']);
             
-            // Update/Delete attendance
+            // Update attendance
             Route::put('records/{attendance}', [AttendanceController::class, 'update']);
-            Route::delete('records/{attendance}', [AttendanceController::class, 'destroy']);
+            // DELETE route removed to avoid conflict with multi-role route
+            
+            // Direct attendance access (for frontend compatibility)
+            Route::get('{id}', [AttendanceController::class, 'show']);
+            Route::put('{id}', [AttendanceController::class, 'update']);
+            // DELETE route removed to avoid conflict with multi-role route
             
             // Export attendance records
             Route::get('export/csv', [AttendanceController::class, 'exportCsv']);

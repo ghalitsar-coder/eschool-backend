@@ -26,8 +26,8 @@ class AttendanceController extends Controller
     {
         $this->attendanceService = $attendanceService;
         
-        // Middleware untuk memastikan hanya koordinator yang bisa akses
-        $this->middleware('role:koordinator');
+        // Remove default middleware as we'll use specific middleware in routes
+        // $this->middleware('role:koordinator');
     }
 
     /**
@@ -215,9 +215,64 @@ class AttendanceController extends Controller
     /**
      * Remove the specified attendance record.
      */
-    public function destroy(AttendanceRecord $attendance): JsonResponse
+    public function destroy($eschoolId, $attendance): JsonResponse
     {
         try {
+            // Handle both explicit ID and model binding
+            if (!$attendance instanceof AttendanceRecord) {
+                $attendance = AttendanceRecord::findOrFail($attendance);
+            }
+            
+            // Verify the attendance record belongs to the specified eschool
+            if ($attendance->eschool_id != $eschoolId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Attendance record not found in specified eschool'
+                ], 404);
+            }
+            
+            // Delete associated proof document if exists
+            if ($attendance->proof_document_path) {
+                \Storage::disk('public')->delete($attendance->proof_document_path);
+            }
+            
+            $attendance->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Attendance record deleted successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to delete attendance record: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
+     * Remove the specified attendance record by ID.
+     */
+    public function destroyRecord($eschoolId, $recordId): JsonResponse
+    {
+        try {
+            // Find the attendance record by ID
+            $attendance = AttendanceRecord::findOrFail($recordId);
+            
+            // Verify the attendance record belongs to the specified eschool
+            if ($attendance->eschool_id != $eschoolId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Attendance record not found in specified eschool'
+                ], 404);
+            }
+            
+            // Delete associated proof document if exists
+            if ($attendance->proof_document_path) {
+                \Storage::disk('public')->delete($attendance->proof_document_path);
+            }
+            
             $attendance->delete();
 
             return response()->json([
@@ -666,71 +721,92 @@ class AttendanceController extends Controller
 }
 
 /**
- * Export attendance records as CSV
+ * Export attendance records as CSV with multi-role context
  */
-public function exportCsv(Request $request): StreamedResponse
+public function exportCsv(Request $request, $eschoolId = null): StreamedResponse
 {
-    $eschoolId = $request->input('eschool_id');
-    $startDate = $request->input('start_date');
-    $endDate = $request->input('end_date');
+    // Support both route parameter and query parameter for eschool_id
+    if (!$eschoolId) {
+        $eschoolId = $request->input('eschool_id');
+    }
+    
+    $startDate = $request->input('start_date', Carbon::now()->startOfMonth()->format('Y-m-d'));
+    $endDate = $request->input('end_date', Carbon::now()->format('Y-m-d'));
     
     if (!$eschoolId) {
         abort(400, 'Eschool ID is required');
     }
     
-    // Build query
-    $query = AttendanceRecord::with(['member.user', 'recorder', 'eschool'])
-        ->byEschool($eschoolId)
-        ->orderBy('date', 'desc')
-        ->orderBy('created_at', 'desc');
-        
-    if ($startDate && $endDate) {
-        $query->byDateRange($startDate, $endDate);
-    }
-    
-    $records = $query->get();
-    
-    $fileName = 'attendance_records_' . now()->format('Y-m-d_H-i-s') . '.csv';
-    
-    return response()->streamDownload(function () use ($records) {
+    $fileName = "attendance_eschool_{$eschoolId}_{$startDate}_to_{$endDate}.csv";
+
+    return response()->stream(function () use ($eschoolId, $startDate, $endDate) {
         $file = fopen('php://output', 'w');
-        
-        // Add comprehensive CSV headers
+
+        // Add BOM for UTF-8
+        fprintf($file, chr(0xEF).chr(0xBB).chr(0xBF));
+
+        // Get records with multi-role context
+        $records = AttendanceRecord::where('eschool_id', $eschoolId)
+            ->when($startDate && $endDate, function ($query) use ($startDate, $endDate) {
+                return $query->whereBetween('date', [$startDate, $endDate]);
+            })
+            ->with([
+                'member.user.eschoolRoles' => function ($query) use ($eschoolId) {
+                    $query->where('eschool_id', $eschoolId);
+                },
+                'recorder.eschoolRoles' => function ($query) use ($eschoolId) {
+                    $query->where('eschool_id', $eschoolId);
+                },
+                'eschool'
+            ])
+            ->orderBy('date', 'desc')
+            ->get();
+
+        // Add header
         fputcsv($file, [
             'ID',
             'Tanggal Kehadiran',
+            'User ID',
             'Nama Member',
+            'Role di Eschool',
             'ID Student',
             'Email Member',
             'Status Kehadiran',
             'Catatan',
             'Dicatat Oleh',
+            'Role Pencatat',
             'Email Pencatat',
             'Nama Eschool',
             'Tanggal Dibuat',
             'Tanggal Diupdate'
         ]);
-        
+
         // Add data rows
         foreach ($records as $record) {
+            $userRole = optional($record->member->user->eschoolRoles)->first();
+            $recorderRole = optional($record->recorder->eschoolRoles)->first();
+
             fputcsv($file, [
                 $record->id,
                 $record->date,
+                $record->member->user->id ?? 'N/A',
                 $record->member->user->name ?? $record->member->name ?? 'N/A',
+                $userRole->role ?? 'unknown',
                 $record->member->student_id ?? '',
                 $record->member->user->email ?? '',
                 $record->is_present ? 'Hadir' : 'Tidak Hadir',
                 $record->notes ?? '',
                 $record->recorder->name ?? '',
+                $recorderRole->role ?? 'unknown',
                 $record->recorder->email ?? '',
                 $record->eschool->name ?? '',
                 $record->created_at->format('Y-m-d H:i:s'),
                 $record->updated_at->format('Y-m-d H:i:s')
             ]);
         }
-        
+
         fclose($file);
-    }, $fileName, [
+    }, 200, [
         'Content-Type' => 'text/csv',
         'Content-Disposition' => 'attachment; filename="' . $fileName . '"',
     ]);
@@ -746,4 +822,664 @@ public function exportPdf(Request $request)
         'message' => 'PDF export is not yet implemented. Please use CSV export for now.'
     ], 400);
 }
+
+    /**
+     * MULTI-ROLE ATTENDANCE MANAGEMENT METHODS
+     * Enhanced methods for the new multi-role schema
+     */
+
+    /**
+     * Get members list for attendance with multi-role context
+     * Excludes koordinator (teachers/staff) from the list as they don't need to be tracked for attendance
+     */
+    public function getMembersList(Request $request, $eschoolId): JsonResponse
+    {
+        try {
+            // Get all users who have roles in this eschool, but exclude koordinator for attendance purposes
+            $members = \App\Models\User::whereHas('eschoolRoles', function ($query) use ($eschoolId) {
+                $query->where('eschool_id', $eschoolId)
+                      ->where('status', 'active')
+                      ->whereIn('role', ['member', 'bendahara']); // Only include members and bendahara, exclude koordinator
+            })->with([
+                'eschoolRoles' => function ($query) use ($eschoolId) {
+                    $query->where('eschool_id', $eschoolId);
+                },
+                'member' // Use singular 'member' relationship
+            ])->get();
+
+            $membersList = $members->map(function ($user) use ($eschoolId) {
+                $roleInEschool = $user->eschoolRoles->first();
+                $memberData = $user->member; // Use singular member
+                
+                // Get attendance summary for this user in this eschool
+                $attendanceRecords = AttendanceRecord::where('member_id', $memberData->id ?? 0)
+                    ->where('eschool_id', $eschoolId)
+                    ->get();
+                
+                $totalSessions = $attendanceRecords->count();
+                $attendedSessions = $attendanceRecords->where('is_present', true)->count();
+                $attendanceRate = $totalSessions > 0 ? ($attendedSessions / $totalSessions) * 100 : 0;
+
+                // Get other roles this user has in other eschools
+                $otherRoles = $user->eschoolRoles->where('eschool_id', '!=', $eschoolId)->map(function ($role) {
+                    return [
+                        'eschool_id' => $role->eschool_id,
+                        'eschool_name' => $role->eschool->name ?? 'Unknown',
+                        'role' => $role->role
+                    ];
+                });
+
+                return [
+                    'user_id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'student_id' => $memberData->student_id ?? 'N/A',
+                    'phone' => $memberData->phone ?? $user->phone,
+                    'role_in_eschool' => $roleInEschool->role ?? 'unknown',
+                    'permissions' => $roleInEschool ? $roleInEschool->getPermissions() : [],
+                    'status' => $roleInEschool->status ?? 'inactive',
+                    'assigned_at' => $roleInEschool->created_at ?? null,
+                    'member_details' => [
+                        'gender' => $memberData->gender ?? null,
+                        'address' => $memberData->address ?? null,
+                        'date_of_birth' => $memberData->date_of_birth ?? null
+                    ],
+                    'other_roles' => $otherRoles->toArray(),
+                    'attendance_summary' => [
+                        'total_sessions' => $totalSessions,
+                        'attended' => $attendedSessions,
+                        'attendance_rate' => round($attendanceRate, 2)
+                    ]
+                ];
+            });
+
+            // Role summary
+            $roleSummary = $membersList->groupBy('role_in_eschool')->map(function ($group) {
+                return $group->count();
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => $membersList->values(),
+                'role_summary' => $roleSummary,
+                'pagination' => [
+                    'current_page' => 1,
+                    'last_page' => 1,
+                    'per_page' => $membersList->count(),
+                    'total' => $membersList->count()
+                ],
+                'message' => 'Members list retrieved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve members list: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get enhanced analytics with multi-role context
+     */
+    public function getAnalytics(Request $request, $eschoolId): JsonResponse
+    {
+        try {
+            $period = $request->input('period', 'week');
+            
+            // Get date range based on period
+            $dateRange = $this->getDateRange($period);
+            
+            // Get all attendance records for this eschool in the period
+            $attendanceRecords = AttendanceRecord::where('eschool_id', $eschoolId)
+                ->whereBetween('date', [$dateRange['start'], $dateRange['end']])
+                ->with(['member.user', 'member.user.eschoolRoles' => function ($query) use ($eschoolId) {
+                    $query->where('eschool_id', $eschoolId);
+                }])
+                ->get();
+
+            // Get all active members with their roles
+            $allMembers = \App\Models\User::whereHas('eschoolRoles', function ($query) use ($eschoolId) {
+                $query->where('eschool_id', $eschoolId)->where('status', 'active');
+            })->with([
+                'eschoolRoles' => function ($query) use ($eschoolId) {
+                    $query->where('eschool_id', $eschoolId);
+                },
+                'member' // Use singular 'member' relationship
+            ])->get();
+
+            $totalMembers = $allMembers->count();
+            $activeMembers = $allMembers->where('eschoolRoles.0.status', 'active')->count();
+            
+            // Calculate overall statistics
+            $totalPresent = $attendanceRecords->where('is_present', true)->count();
+            $totalPossible = $this->calculateTotalPossibleAttendance($allMembers, $dateRange);
+            $attendanceRate = $totalPossible > 0 ? ($totalPresent / $totalPossible) * 100 : 0;
+
+            // Role breakdown analysis
+            $roleBreakdown = [];
+            $roleGroups = $allMembers->groupBy('eschoolRoles.0.role');
+            
+            foreach ($roleGroups as $role => $users) {
+                $roleAttendance = $attendanceRecords->whereIn('member.user.id', $users->pluck('id'));
+                $rolePresent = $roleAttendance->where('is_present', true)->count();
+                $roleTotal = $users->count() * $this->getWorkingDaysInRange($dateRange);
+                
+                $roleBreakdown[$role] = [
+                    'total' => $users->count(),
+                    'present' => $rolePresent,
+                    'rate' => $roleTotal > 0 ? round(($rolePresent / $roleTotal) * 100, 2) : 0
+                ];
+            }
+
+            // Daily summary with role context
+            $dailySummary = $this->generateDailySummaryWithRoles($attendanceRecords, $dateRange, $allMembers);
+
+            // Member attendance with multi-role context
+            $memberAttendance = $allMembers->map(function ($user) use ($attendanceRecords, $eschoolId) {
+                $userAttendance = $attendanceRecords->where('member.user.id', $user->id);
+                $presentDays = $userAttendance->where('is_present', true)->count();
+                $totalDays = $userAttendance->count();
+                $attendanceRate = $totalDays > 0 ? ($presentDays / $totalDays) * 100 : 0;
+                
+                $roleInEschool = $user->eschoolRoles->first();
+                $memberData = $user->member; // Use singular member relationship
+                
+                // Get other participations
+                $otherParticipations = $user->eschoolRoles->where('eschool_id', '!=', $eschoolId)->map(function ($role) {
+                    // Get attendance rate for other eschool
+                    $otherAttendance = AttendanceRecord::whereHas('member', function ($query) use ($role) {
+                        $query->where('user_id', $role->user_id);
+                    })->where('eschool_id', $role->eschool_id)->get();
+                    
+                    $otherPresent = $otherAttendance->where('is_present', true)->count();
+                    $otherTotal = $otherAttendance->count();
+                    $otherRate = $otherTotal > 0 ? ($otherPresent / $otherTotal) * 100 : 0;
+                    
+                    return [
+                        'eschool_name' => $role->eschool->name ?? 'Unknown',
+                        'role' => $role->role,
+                        'attendance_rate' => round($otherRate, 2)
+                    ];
+                });
+
+                return [
+                    'user_id' => $user->id,
+                    'name' => $user->name,
+                    'role_in_eschool' => $roleInEschool->role ?? 'unknown',
+                    'student_id' => $memberData->student_id ?? 'N/A',
+                    'present_days' => $presentDays,
+                    'total_days' => $totalDays,
+                    'attendance_rate' => round($attendanceRate, 2),
+                    'status' => $roleInEschool->status ?? 'inactive',
+                    'other_participations' => $otherParticipations->toArray()
+                ];
+            })->sortByDesc('attendance_rate');
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'period' => $period,
+                    'date_range' => [
+                        'start' => $dateRange['start'],
+                        'end' => $dateRange['end']
+                    ],
+                    'overall' => [
+                        'total_members' => $totalMembers,
+                        'active_members' => $activeMembers,
+                        'total_present' => $totalPresent,
+                        'total_possible' => $totalPossible,
+                        'attendance_rate' => round($attendanceRate, 2)
+                    ],
+                    'role_breakdown' => $roleBreakdown,
+                    'daily_summary' => $dailySummary,
+                    'member_attendance' => $memberAttendance->values(),
+                    'weekday_analysis' => $this->generateWeekdayAnalysis($attendanceRecords, $dateRange)
+                ],
+                'message' => 'Attendance analytics retrieved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve attendance analytics: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get enhanced statistics with role context
+     */
+    public function getStatistics(Request $request, $eschoolId): JsonResponse
+    {
+        try {
+            $today = Carbon::today();
+            $weekStart = $today->copy()->startOfWeek();
+            $monthStart = $today->copy()->startOfMonth();
+
+            // Get active members with roles
+            $activeMembers = \App\Models\User::whereHas('eschoolRoles', function ($query) use ($eschoolId) {
+                $query->where('eschool_id', $eschoolId)->where('status', 'active');
+            })->with(['eschoolRoles' => function ($query) use ($eschoolId) {
+                $query->where('eschool_id', $eschoolId);
+            }])->count();
+
+            // Today's statistics
+            $todayRecords = AttendanceRecord::where('eschool_id', $eschoolId)
+                ->whereDate('date', $today)
+                ->get();
+            $todayPresent = $todayRecords->where('is_present', true)->count();
+            $todayPercentage = $activeMembers > 0 ? ($todayPresent / $activeMembers) * 100 : 0;
+
+            // Week's statistics
+            $weekRecords = AttendanceRecord::where('eschool_id', $eschoolId)
+                ->whereBetween('date', [$weekStart, $today])
+                ->get();
+            $weekPresent = $weekRecords->where('is_present', true)->count();
+            $weekTotal = $weekRecords->count();
+            $weekPercentage = $weekTotal > 0 ? ($weekPresent / $weekTotal) * 100 : 0;
+
+            // Month's statistics
+            $monthRecords = AttendanceRecord::where('eschool_id', $eschoolId)
+                ->whereBetween('date', [$monthStart, $today])
+                ->get();
+            $monthPresent = $monthRecords->where('is_present', true)->count();
+            $monthTotal = $monthRecords->count();
+            $monthPercentage = $monthTotal > 0 ? ($monthPresent / $monthTotal) * 100 : 0;
+
+            // Role-based statistics
+            $roleStats = \App\Models\User::whereHas('eschoolRoles', function ($query) use ($eschoolId) {
+                $query->where('eschool_id', $eschoolId)->where('status', 'active');
+            })->with(['eschoolRoles' => function ($query) use ($eschoolId) {
+                $query->where('eschool_id', $eschoolId);
+            }])->get()->groupBy('eschoolRoles.0.role')->map(function ($users, $role) use ($eschoolId, $today) {
+                $userIds = $users->pluck('id');
+                $todayPresent = AttendanceRecord::whereHas('member', function ($query) use ($userIds) {
+                    $query->whereIn('user_id', $userIds);
+                })->where('eschool_id', $eschoolId)
+                  ->whereDate('date', $today)
+                  ->where('is_present', true)
+                  ->count();
+
+                return [
+                    'total' => $users->count(),
+                    'present_today' => $todayPresent,
+                    'rate_today' => $users->count() > 0 ? round(($todayPresent / $users->count()) * 100, 2) : 0
+                ];
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'today' => [
+                        'present' => $todayPresent,
+                        'total' => $activeMembers,
+                        'percentage' => round($todayPercentage, 2)
+                    ],
+                    'week' => [
+                        'present' => $weekPresent,
+                        'total' => $weekTotal,
+                        'percentage' => round($weekPercentage, 2)
+                    ],
+                    'month' => [
+                        'present' => $monthPresent,
+                        'total' => $monthTotal,
+                        'percentage' => round($monthPercentage, 2)
+                    ],
+                    'total_members' => $activeMembers,
+                    'role_statistics' => $roleStats
+                ],
+                'message' => 'Attendance statistics retrieved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve attendance statistics: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get enhanced attendance records with multi-role context
+     */
+    public function getRecords(Request $request, $eschoolId): JsonResponse
+    {
+        try {
+            $page = $request->input('page', 1);
+            $perPage = $request->input('per_page', 10);
+            $search = $request->input('search');
+            $roleFilter = $request->input('role_filter');
+            $dateFilter = $request->input('date_filter');
+            $statusFilter = $request->input('status_filter');
+
+            // Build query with multi-role context
+            $query = AttendanceRecord::where('eschool_id', $eschoolId)
+                ->with([
+                    'member.user.eschoolRoles' => function ($q) use ($eschoolId) {
+                        $q->where('eschool_id', $eschoolId);
+                    },
+                    'recorder.eschoolRoles' => function ($q) use ($eschoolId) {
+                        $q->where('eschool_id', $eschoolId);
+                    }
+                ]);
+
+            // Apply filters
+            if ($search) {
+                $query->whereHas('member.user', function ($q) use ($search) {
+                    $q->where('name', 'like', "%{$search}%")
+                      ->orWhere('email', 'like', "%{$search}%");
+                })->orWhereHas('member', function ($q) use ($search) {
+                    $q->where('student_id', 'like', "%{$search}%");
+                });
+            }
+
+            if ($roleFilter && $roleFilter !== 'all') {
+                $query->whereHas('member.user.eschoolRoles', function ($q) use ($roleFilter, $eschoolId) {
+                    $q->where('eschool_id', $eschoolId)->where('role', $roleFilter);
+                });
+            }
+
+            if ($dateFilter) {
+                $query->whereDate('date', $dateFilter);
+            }
+
+            if ($statusFilter !== null) {
+                $query->where('is_present', $statusFilter === 'present');
+            }
+
+            // Get paginated results
+            $records = $query->orderBy('date', 'desc')
+                ->orderBy('created_at', 'desc')
+                ->paginate($perPage);
+
+            // Transform records with multi-role context
+            $transformedRecords = $records->getCollection()->map(function ($record) {
+                $userRole = $record->member->user->eschoolRoles->first();
+                $recorderRole = $record->recorder->eschoolRoles->first();
+
+                return [
+                    'id' => $record->id,
+                    'date' => $record->date,
+                    'is_present' => $record->is_present,
+                    'notes' => $record->notes,
+                    'proof_document_path' => $record->proof_document_path,
+                    'member' => [
+                        'user_id' => $record->member->user->id,
+                        'name' => $record->member->user->name,
+                        'email' => $record->member->user->email,
+                        'student_id' => $record->member->student_id,
+                        'phone' => $record->member->phone,
+                        'role_in_eschool' => $userRole->role ?? 'unknown'
+                    ],
+                    'recorder' => [
+                        'id' => $record->recorder->id,
+                        'name' => $record->recorder->name,
+                        'email' => $record->recorder->email,
+                        'role_in_eschool' => $recorderRole->role ?? 'unknown'
+                    ],
+                    'created_at' => $record->created_at,
+                    'updated_at' => $record->updated_at
+                ];
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => $transformedRecords,
+                'meta' => [
+                    'total' => $records->total(),
+                    'per_page' => $records->perPage(),
+                    'current_page' => $records->currentPage(),
+                    'last_page' => $records->lastPage(),
+                    'from' => $records->firstItem(),
+                    'to' => $records->lastItem(),
+                    'has_next_page' => $records->hasMorePages(),
+                    'has_prev_page' => $records->currentPage() > 1
+                ],
+                'message' => 'Attendance records retrieved successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve attendance records: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Create attendance record with multi-role context
+     */
+    public function createRecord(Request $request, $eschoolId): JsonResponse
+    {
+        try {
+            // Log the incoming data for debugging
+            \Log::info('Attendance createRecord request', [
+                'eschool_id' => $eschoolId,
+                'request_data' => $request->all(),
+                'members_count' => count($request->input('members', [])),
+            ]);
+
+            $request->validate([
+                'date' => 'required|date',
+                'members' => 'required|array',
+                'members.*.member_id' => 'required|exists:users,id', // Changed from user_id to member_id for frontend compatibility
+                'members.*.is_present' => 'required|boolean',
+                'members.*.notes' => 'nullable|string|max:500',
+                'members.*.proof_document' => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:2048'
+            ]);
+
+            $recorderId = auth()->id();
+            $date = $request->input('date');
+            $membersData = $request->input('members');
+            $createdRecords = [];
+            $errors = [];
+
+            foreach ($membersData as $index => $memberData) {
+                // Convert member_id to user_id for internal processing
+                $userId = $memberData['member_id'];
+                
+                // Verify user has role in this eschool
+                $userRole = \App\Models\UserEschoolRole::where('user_id', $userId)
+                    ->where('eschool_id', $eschoolId)
+                    ->where('status', 'active')
+                    ->first();
+
+                if (!$userRole) {
+                    continue; // Skip users who don't have role in this eschool
+                }
+
+                // Get member record
+                $member = \App\Models\Member::where('user_id', $userId)
+                    ->whereHas('eschools', function ($query) use ($eschoolId) {
+                        $query->where('eschool_id', $eschoolId);
+                    })->first();
+
+                if (!$member) {
+                    continue; // Skip if no member record found
+                }
+
+                // Check for duplicate attendance
+                $existingRecord = AttendanceRecord::where('eschool_id', $eschoolId)
+                    ->where('member_id', $member->id)
+                    ->whereDate('date', $date)
+                    ->first();
+
+                if ($existingRecord) {
+                    $errors[] = "Member {$member->user->name} sudah absen pada tanggal {$date}";
+                    continue;
+                }
+
+                // Handle proof document upload
+                $proofDocumentPath = null;
+                $proofDocumentName = null;
+                $proofDocumentType = null;
+                $proofDocumentSize = null;
+
+                if ($request->hasFile("members.{$index}.proof_document")) {
+                    $file = $request->file("members.{$index}.proof_document");
+                    $proofDocumentPath = $file->store('attendance/proof_documents', 'public');
+                    $proofDocumentName = $file->getClientOriginalName();
+                    $proofDocumentType = $file->getClientMimeType();
+                    $proofDocumentSize = $file->getSize();
+                }
+
+                // Create or update attendance record
+                $attendanceRecord = AttendanceRecord::create([
+                    'eschool_id' => $eschoolId,
+                    'member_id' => $member->id,
+                    'date' => $date,
+                    'recorder_id' => $recorderId,
+                    'is_present' => $memberData['is_present'],
+                    'notes' => $memberData['notes'] ?? null,
+                    'proof_document_path' => $proofDocumentPath,
+                    'proof_document_name' => $proofDocumentName,
+                    'proof_document_type' => $proofDocumentType,
+                    'proof_document_size' => $proofDocumentSize
+                ]);
+
+                $createdRecords[] = $attendanceRecord->load(['member.user', 'recorder']);
+            }
+
+            // If there are duplicate errors, return them
+            if (!empty($errors)) {
+                return response()->json([
+                    'success' => false,
+                    'messages' => $errors
+                ], 422);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $createdRecords,
+                'message' => 'Attendance records created successfully',
+                'total_created' => count($createdRecords)
+            ], 201);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to create attendance records: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Helper methods for analytics
+     */
+    private function getDateRange($period): array
+    {
+        $end = Carbon::now();
+        
+        switch ($period) {
+            case 'week':
+                $start = $end->copy()->startOfWeek();
+                break;
+            case 'month':
+                $start = $end->copy()->startOfMonth();
+                break;
+            case 'year':
+                $start = $end->copy()->startOfYear();
+                break;
+            default:
+                $start = $end->copy()->startOfWeek();
+        }
+
+        return [
+            'start' => $start->format('Y-m-d'),
+            'end' => $end->format('Y-m-d')
+        ];
+    }
+
+    private function calculateTotalPossibleAttendance($members, $dateRange): int
+    {
+        $workingDays = $this->getWorkingDaysInRange($dateRange);
+        return $members->count() * $workingDays;
+    }
+
+    private function getWorkingDaysInRange($dateRange): int
+    {
+        $start = Carbon::parse($dateRange['start']);
+        $end = Carbon::parse($dateRange['end']);
+        
+        $workingDays = 0;
+        while ($start->lte($end)) {
+            if (!$start->isWeekend()) {
+                $workingDays++;
+            }
+            $start->addDay();
+        }
+        
+        return $workingDays;
+    }
+
+    private function generateDailySummaryWithRoles($attendanceRecords, $dateRange, $allMembers): array
+    {
+        $start = Carbon::parse($dateRange['start']);
+        $end = Carbon::parse($dateRange['end']);
+        $summary = [];
+
+        while ($start->lte($end)) {
+            $dateString = $start->format('Y-m-d');
+            $dayRecords = $attendanceRecords->where('date', $dateString);
+            
+            $roleAttendance = [];
+            $membersByRole = $allMembers->groupBy('eschoolRoles.0.role');
+            
+            foreach ($membersByRole as $role => $users) {
+                $userIds = $users->pluck('id');
+                $rolePresent = $dayRecords->whereIn('member.user.id', $userIds)->where('is_present', true)->count();
+                $roleTotal = $users->count();
+                
+                $roleAttendance[$role] = [
+                    'present' => $rolePresent,
+                    'total' => $roleTotal
+                ];
+            }
+
+            $totalPresent = $dayRecords->where('is_present', true)->count();
+            $totalPossible = $allMembers->count();
+            
+            $summary[] = [
+                'date' => $dateString,
+                'formatted_date' => $start->format('M d'),
+                'day_name' => $start->format('l'),
+                'role_attendance' => $roleAttendance,
+                'overall_present' => $totalPresent,
+                'overall_total' => $totalPossible,
+                'overall_rate' => $totalPossible > 0 ? round(($totalPresent / $totalPossible) * 100, 2) : 0
+            ];
+            
+            $start->addDay();
+        }
+
+        return $summary;
+    }
+
+    private function generateWeekdayAnalysis($attendanceRecords, $dateRange): array
+    {
+        $weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+        $analysis = [];
+
+        foreach ($weekdays as $weekday) {
+            $weekdayRecords = $attendanceRecords->filter(function ($record) use ($weekday) {
+                return Carbon::parse($record->date)->format('l') === $weekday;
+            });
+
+            $totalSessions = $weekdayRecords->groupBy('date')->count();
+            $totalPresent = $weekdayRecords->where('is_present', true)->count();
+            $totalPossible = $weekdayRecords->count();
+
+            $analysis[] = [
+                'day' => $weekday,
+                'short_day' => substr($weekday, 0, 3),
+                'average_attendance_rate' => $totalPossible > 0 ? round(($totalPresent / $totalPossible) * 100, 2) : 0,
+                'total_sessions' => $totalSessions,
+                'total_present' => $totalPresent,
+                'total_possible' => $totalPossible
+            ];
+        }
+
+        return $analysis;
+    }
 }

@@ -18,6 +18,13 @@ class AttendanceService
      */
   public function recordBatchAttendance(string $eschoolId, array $attendanceData, string $recorderId): Collection
     {
+        \Log::info('recordBatchAttendance called', [
+            'eschool_id' => $eschoolId,
+            'date' => $attendanceData['date'] ?? 'not set',
+            'members_count' => count($attendanceData['members'] ?? []),
+            'members_data' => $attendanceData['members'] ?? []
+        ]);
+
         $eschool = Eschool::findOrFail($eschoolId);
         $date = Carbon::parse($attendanceData['date'] ?? now());
 
@@ -41,6 +48,13 @@ class AttendanceService
                                             ->where('member_id', $memberId)
                                             ->whereDate('date', $date->toDateString())
                                             ->first();
+
+            \Log::info('Duplicate check', [
+                'eschool_id' => $eschoolId,
+                'member_id' => $memberId,
+                'date' => $date->toDateString(),
+                'existing_record_id' => $existingRecord ? $existingRecord->id : null
+            ]);
 
             if ($existingRecord) {
                 // Kumpulkan error, jangan langsung throw
@@ -85,6 +99,10 @@ class AttendanceService
      */
     public function updateAttendance(AttendanceRecord $attendanceRecord, array $attendanceData): AttendanceRecord
     {
+        // Store old is_present status for comparison
+        $oldIsPresent = $attendanceRecord->is_present;
+        $newIsPresent = isset($attendanceData['is_present']) ? (bool)$attendanceData['is_present'] : $attendanceRecord->is_present;
+        
         // Handle proof document upload if provided
         $proofDocumentData = null;
         if (isset($attendanceData['proof_document']) && $attendanceData['proof_document'] instanceof UploadedFile) {
@@ -103,7 +121,7 @@ class AttendanceService
 
         // Update record with new data
         $updateData = [
-            'is_present' => isset($attendanceData['is_present']) ? (bool)$attendanceData['is_present'] : $attendanceRecord->is_present,
+            'is_present' => $newIsPresent,
             'notes' => $attendanceData['notes'] ?? $attendanceRecord->notes,
         ];
 
@@ -113,6 +131,18 @@ class AttendanceService
             $updateData['proof_document_name'] = $proofDocumentData['name'];
             $updateData['proof_document_type'] = $proofDocumentData['type'];
             $updateData['proof_document_size'] = $proofDocumentData['size'];
+        }
+        
+        // If status changed from absent (false) to present (true), clean up proof document
+        if (!$oldIsPresent && $newIsPresent && $attendanceRecord->proof_document_path) {
+            // Delete old proof document as it's no longer needed
+            Storage::disk('public')->delete($attendanceRecord->proof_document_path);
+            
+            // Clear proof document fields
+            $updateData['proof_document_path'] = null;
+            $updateData['proof_document_name'] = null;
+            $updateData['proof_document_type'] = null;
+            $updateData['proof_document_size'] = null;
         }
 
         $attendanceRecord->update($updateData);

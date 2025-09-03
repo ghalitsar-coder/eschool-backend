@@ -23,22 +23,52 @@ class AuthController extends Controller
 
         $user = auth()->user();
 
-
-      // Tentukan eschool_id berdasarkan role
-    if ($user->isKoordinator()) {
-        \Log::info("I AM KOORDINATOR`");
-        $eschoolId = $user->coordinatedEschool?->id;
-    } elseif ($user->isBendahara()) {
-        $eschoolId = $user->treasurerEschool?->id;
-    } elseif ($user->isSiswa()) {
-        $eschoolId = $user->member?->eschool_id;
-    } elseif ($user->isStaff()) {
-        \Log::info("I AM staff`");
-        // misalnya staff juga punya relasi langsung ke eschool
-        $eschoolId = $user->eschool?->id;
-    }
-   \Log::info("eschoolID: " . $eschoolId);
-
+        // NEW MULTI-ROLE LOGIC
+        // Get all eschools where user has any role
+        $eschoolsData = $user->getEschoolsData();
+        
+        // For backward compatibility, determine primary eschool_id
+        $primaryEschoolId = null;
+        $primaryRole = null;
+        
+        if (!empty($eschoolsData)) {
+            // Priority: koordinator > bendahara > member
+            $koordinatorEschool = collect($eschoolsData)->firstWhere('role_in_eschool', 'koordinator');
+            $bendaharaEschool = collect($eschoolsData)->firstWhere('role_in_eschool', 'bendahara');
+            $memberEschool = collect($eschoolsData)->first(); // First available if no higher role
+            
+            if ($koordinatorEschool) {
+                $primaryEschoolId = $koordinatorEschool['eschool_id'];
+                $primaryRole = 'koordinator';
+            } elseif ($bendaharaEschool) {
+                $primaryEschoolId = $bendaharaEschool['eschool_id'];
+                $primaryRole = 'bendahara';
+            } elseif ($memberEschool) {
+                $primaryEschoolId = $memberEschool['eschool_id'];
+                $primaryRole = $memberEschool['role_in_eschool'];
+            }
+        }
+        
+        // FALLBACK to old logic if no roles found in new system
+        if (!$primaryEschoolId) {
+            if ($user->isKoordinator()) {
+                \Log::info("FALLBACK: I AM KOORDINATOR");
+                $primaryEschoolId = $user->coordinatedEschool?->id;
+                $primaryRole = 'koordinator';
+            } elseif ($user->isBendahara()) {
+                $primaryEschoolId = $user->treasurerEschool?->id;
+                $primaryRole = 'bendahara';
+            } elseif ($user->isSiswa()) {
+                $primaryEschoolId = $user->member?->eschool_id;
+                $primaryRole = 'member';
+            } elseif ($user->isStaff()) {
+                \Log::info("FALLBACK: I AM staff");
+                $primaryEschoolId = $user->eschool?->id;
+                $primaryRole = 'staff';
+            }
+        }
+        
+        // \Log::info("Primary eschoolID: " . $primaryEschoolId . ", Role: " . $primaryRole);
         
         // Generate access token with short TTL
         $accessToken = JWTAuth::fromUser($user);
@@ -54,13 +84,20 @@ class AuthController extends Controller
         
         $refreshToken = JWTAuth::getJWTProvider()->encode($refreshClaims);
 
+        // ENHANCED USER DATA with multi-role support
         $userData = [
             'id' => $user->id,
             'name' => $user->name,
             'email' => $user->email,
-            'role' => $user->role,
+            'role' => $user->role, // Keep original role for compatibility
             'school_id' => $user->school_id,
-            'eschool_id' => $eschoolId,
+            'eschool_id' => $primaryEschoolId, // Primary eschool for backward compatibility
+            'primary_role' => $primaryRole, // Primary role in primary eschool
+            
+            // NEW: Multi-role data
+            'eschools' => $eschoolsData, // All eschools with roles and permissions
+            'total_eschools' => count($eschoolsData),
+            'available_roles' => array_unique(array_column($eschoolsData, 'role_in_eschool')),
         ];
  
  
@@ -197,32 +234,72 @@ class AuthController extends Controller
             
             $newRefreshToken = JWTAuth::getJWTProvider()->encode($refreshClaims);
 
-            if ($user->isKoordinator()) {
-                $eschoolId = $user->coordinatedEschool?->id;
-            } elseif ($user->isBendahara()) {
-                $eschoolId = $user->treasurerEschool?->id;
-            } elseif ($user->isSiswa()) {
-                $eschoolId = $user->member?->eschool_id;
-            } elseif ($user->isStaff()) {
-                // misalnya staff juga punya relasi langsung ke eschool
-                $eschoolId = $user->eschool?->id;
+            // MULTI-ROLE LOGIC for refresh - aligned with new schema
+            // Get all eschools where user has any role
+            $eschoolsData = $user->getEschoolsData();
+            
+            // For backward compatibility, determine primary eschool_id
+            $primaryEschoolId = null;
+            $primaryRole = null;
+            
+            if (!empty($eschoolsData)) {
+                // Priority: koordinator > bendahara > member
+                $koordinatorEschool = collect($eschoolsData)->firstWhere('role_in_eschool', 'koordinator');
+                $bendaharaEschool = collect($eschoolsData)->firstWhere('role_in_eschool', 'bendahara');
+                $memberEschool = collect($eschoolsData)->first(); // First available if no higher role
+                
+                if ($koordinatorEschool) {
+                    $primaryEschoolId = $koordinatorEschool['eschool_id'];
+                    $primaryRole = 'koordinator';
+                } elseif ($bendaharaEschool) {
+                    $primaryEschoolId = $bendaharaEschool['eschool_id'];
+                    $primaryRole = 'bendahara';
+                } elseif ($memberEschool) {
+                    $primaryEschoolId = $memberEschool['eschool_id'];
+                    $primaryRole = $memberEschool['role_in_eschool'];
+                }
+            }
+            
+            // FALLBACK to old logic if no roles found in new system
+            if (!$primaryEschoolId) {
+                if ($user->isKoordinator()) {
+                    $primaryEschoolId = $user->coordinatedEschool?->id;
+                    $primaryRole = 'koordinator';
+                } elseif ($user->isBendahara()) {
+                    $primaryEschoolId = $user->treasurerEschool?->id;
+                    $primaryRole = 'bendahara';
+                } elseif ($user->isSiswa()) {
+                    $primaryEschoolId = $user->member?->eschool_id;
+                    $primaryRole = 'member';
+                } elseif ($user->isStaff()) {
+                    $primaryEschoolId = $user->eschool?->id;
+                    $primaryRole = 'staff';
+                }
             }
 
+            // ENHANCED USER DATA with multi-role support for refresh
             $userData = [
-            'id' => $user->id,
-            'name' => $user->name,
-            'email' => $user->email,
-            'role' => $user->role,
-            'eschool_id' => $eschoolId,
-        ];
- 
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'base_role' => $user->base_role, // New field for base role
+                'is_system_admin' => $user->is_system_admin, // New field for system admin status
+                'school_id' => $user->school_id,
+                'eschool_id' => $primaryEschoolId, // Primary eschool for backward compatibility
+                'primary_role' => $primaryRole, // Primary role in primary eschool
+                
+                // NEW: Multi-role data aligned with schema baru
+                'eschool_roles' => $eschoolsData, // All eschools with roles and permissions
+                'total_eschools' => count($eschoolsData),
+                'available_roles' => array_unique(array_column($eschoolsData, 'role_in_eschool')),
+            ];
 
             $response = response()->json([
+                'success' => true, // Menyelaraskan dengan format response baru
                 'data' => [
                     'user' => $userData,
-                    
                 ],
-                'message' => 'refresh success',
+                'message' => 'Token refreshed successfully',
                 'expires_in' => (int) config('jwt.ttl') * 60
             ]);
 
@@ -256,6 +333,7 @@ class AuthController extends Controller
 
         } catch (\Exception $e) {
             return response()->json([
+                'success' => false, // Menyelaraskan dengan format response baru
                 'message' => 'Token refresh failed',
                 'error' => $e->getMessage()
             ], 401);
