@@ -14,7 +14,7 @@ use App\Models\School;
 class MemberController extends Controller
 {
     /**
-     * Display a listing of the resource.
+     * Display a listing of the resource (Multi-Role Version).
      */
     public function index(Request $request)
     {
@@ -26,22 +26,21 @@ class MemberController extends Controller
             if ($eschoolId) {
                 $eschool = Eschool::where('id', $eschoolId)->firstOrFail();
                 
-                // Validasi bahwa user memiliki akses ke eschool ini
-                if ($user->role === 'koordinator') {
-                    // Koordinator hanya bisa mengakses eschool yang mereka koordinatori
-                    if ($eschool->coordinator_id !== $user->id) {
+                // Validasi bahwa user memiliki akses ke eschool ini menggunakan multi-role system
+                if ($user->base_role === 'guru' || $user->base_role === 'siswa') {
+                    // Check if user has koordinator or bendahara role in this eschool
+                    $hasAccess = $user->eschoolRoles()
+                        ->where('eschool_id', $eschoolId)
+                        ->whereIn('role', ['koordinator', 'bendahara'])
+                        ->where('status', 'active')
+                        ->exists();
+                    
+                    if (!$hasAccess && $user->base_role !== 'staff') {
                         return response()->json([
-                            'message' => 'Unauthorized. You can only access your own eschool.'
+                            'message' => 'Unauthorized. You do not have access to this eschool.'
                         ], 403);
                     }
-                } elseif ($user->role === 'bendahara') {
-                    // Bendahara hanya bisa mengakses eschool yang mereka bendaharai
-                    if ($eschool->treasurer_id !== $user->id) {
-                        return response()->json([
-                            'message' => 'Unauthorized. You can only access your own eschool.'
-                        ], 403);
-                    }
-                } elseif ($user->role !== 'staff') {
+                } elseif ($user->base_role !== 'staff') {
                     // Hanya staff, koordinator, dan bendahara yang bisa mengakses dengan eschool_id
                     return response()->json([
                         'message' => 'Unauthorized. Only staff, coordinator, or treasurer can access members by eschool.'
@@ -74,41 +73,46 @@ class MemberController extends Controller
                     'members' => $members,
                 ]);
             } 
-            // Jika tidak, kembalikan members berdasarkan role pengguna
+            // Jika tidak, kembalikan members berdasarkan role pengguna menggunakan multi-role system
             else {
                 $query = Member::with('user', 'eschools', 'school');
                 
-                // Filter berdasarkan role pengguna
-                if ($user->role === 'koordinator') {
-                    // Untuk koordinator, hanya tampilkan members dari sekolah yang sama
-                    $coordinatorEschool = Eschool::where('coordinator_id', $user->id)->first();
-                    if ($coordinatorEschool) {
-                        $schoolId = $coordinatorEschool->school_id;
-                        $query->where('school_id', $schoolId);
+                // Filter berdasarkan base_role dan eschool access pengguna
+                if ($user->base_role === 'guru') {
+                    // Untuk guru (koordinator), ambil members dari eschools yang mereka koordinatori
+                    $userEschools = $user->eschoolRoles()
+                        ->where('role', 'koordinator')
+                        ->where('status', 'active')
+                        ->pluck('eschool_id');
+                    
+                    if ($userEschools->isNotEmpty()) {
+                        // Get school_ids from those eschools
+                        $schoolIds = Eschool::whereIn('id', $userEschools)->pluck('school_id');
+                        $query->whereIn('school_id', $schoolIds);
                     } else {
-                        // Jika koordinator tidak memiliki eschool, kembalikan array kosong
-                        $query->where('id', -1); // Tidak akan cocok dengan apa pun
+                        // Jika tidak memiliki eschool, kembalikan array kosong
+                        $query->where('id', -1);
                     }
-                } elseif ($user->role === 'staff') {
-                    // Untuk staff, hanya tampilkan members dari sekolah mereka
-                    if ($user->school_id) {
-                        $query->where('school_id', $user->school_id);
+                } elseif ($user->base_role === 'staff') {
+                    // Untuk staff, tampilkan semua members (atau bisa dibatasi per sekolah jika ada)
+                    // Staff biasanya punya akses luas
+                    $query; // No additional filter for staff
+                } elseif ($user->base_role === 'siswa') {
+                    // Untuk siswa (bendahara), ambil members dari eschools yang mereka kelola sebagai bendahara
+                    $userEschools = $user->eschoolRoles()
+                        ->where('role', 'bendahara')
+                        ->where('status', 'active')
+                        ->pluck('eschool_id');
+                    
+                    if ($userEschools->isNotEmpty()) {
+                        // Get school_ids from those eschools
+                        $schoolIds = Eschool::whereIn('id', $userEschools)->pluck('school_id');
+                        $query->whereIn('school_id', $schoolIds);
                     } else {
-                        // Jika staff tidak memiliki school_id, kembalikan array kosong
-                        $query->where('id', -1); // Tidak akan cocok dengan apa pun
-                    }
-                } elseif ($user->role === 'bendahara') {
-                    // Untuk bendahara, hanya tampilkan members dari sekolah yang sama
-                    $treasurerEschool = Eschool::where('treasurer_id', $user->id)->first();
-                    if ($treasurerEschool) {
-                        $schoolId = $treasurerEschool->school_id;
-                        $query->where('school_id', $schoolId);
-                    } else {
-                        // Jika bendahara tidak memiliki eschool, kembalikan array kosong
-                        $query->where('id', -1); // Tidak akan cocok dengan apa pun
+                        // Jika tidak memiliki role bendahara, kembalikan array kosong
+                        $query->where('id', -1);
                     }
                 }
-                // Untuk siswa, tidak perlu filter tambahan
                 
                 $members = $query->where('is_active', true)->paginate(20);
 

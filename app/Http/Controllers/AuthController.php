@@ -16,16 +16,20 @@ class AuthController extends Controller
     public function login(Request $request)
     {
         $credentials = $request->only('email', 'password');
+        \Log::info('🔐 LOGIN ATTEMPT', ['email' => $credentials['email']]);
 
         if (!$token = auth()->attempt($credentials)) {
+            \Log::error('❌ LOGIN FAILED - Invalid credentials', ['email' => $credentials['email']]);
             return response()->json(['message' => 'Invalid credentials'], 401);
         }
 
         $user = auth()->user();
+        \Log::info('✅ AUTH SUCCESS', ['user_id' => $user->id, 'user_email' => $user->email]);
 
         // NEW MULTI-ROLE LOGIC
         // Get all eschools where user has any role
         $eschoolsData = $user->getEschoolsData();
+        \Log::info('📚 ESCHOOLS DATA', ['eschools_data' => $eschoolsData]);
         
         // For backward compatibility, determine primary eschool_id
         $primaryEschoolId = null;
@@ -36,6 +40,12 @@ class AuthController extends Controller
             $koordinatorEschool = collect($eschoolsData)->firstWhere('role_in_eschool', 'koordinator');
             $bendaharaEschool = collect($eschoolsData)->firstWhere('role_in_eschool', 'bendahara');
             $memberEschool = collect($eschoolsData)->first(); // First available if no higher role
+            
+            \Log::info('🔍 ROLE SEARCH', [
+                'koordinator_eschool' => $koordinatorEschool,
+                'bendahara_eschool' => $bendaharaEschool,
+                'member_eschool' => $memberEschool
+            ]);
             
             if ($koordinatorEschool) {
                 $primaryEschoolId = $koordinatorEschool['eschool_id'];
@@ -49,29 +59,27 @@ class AuthController extends Controller
             }
         }
         
-        // FALLBACK to old logic if no roles found in new system
+        \Log::info('👑 PRIMARY ROLE DETERMINED', [
+            'primary_eschool_id' => $primaryEschoolId,
+            'primary_role' => $primaryRole
+        ]);
+        
+        // If user has no roles in any eschool, they should not be able to login to this system
         if (!$primaryEschoolId) {
-            if ($user->isKoordinator()) {
-                \Log::info("FALLBACK: I AM KOORDINATOR");
-                $primaryEschoolId = $user->coordinatedEschool?->id;
-                $primaryRole = 'koordinator';
-            } elseif ($user->isBendahara()) {
-                $primaryEschoolId = $user->treasurerEschool?->id;
-                $primaryRole = 'bendahara';
-            } elseif ($user->isSiswa()) {
-                $primaryEschoolId = $user->member?->eschool_id;
-                $primaryRole = 'member';
-            } elseif ($user->isStaff()) {
-                \Log::info("FALLBACK: I AM staff");
-                $primaryEschoolId = $user->eschool?->id;
-                $primaryRole = 'staff';
-            }
+            \Log::error('❌ NO ROLES ASSIGNED', ['user_id' => $user->id]);
+            return response()->json([
+                'message' => 'User has no assigned roles in any eschool. Please contact administrator.'
+            ], 403);
         }
         
         // \Log::info("Primary eschoolID: " . $primaryEschoolId . ", Role: " . $primaryRole);
         
         // Generate access token with short TTL
         $accessToken = JWTAuth::fromUser($user);
+        \Log::info('🔑 ACCESS TOKEN GENERATED', [
+            'token_length' => strlen($accessToken),
+            'token_preview' => substr($accessToken, 0, 50) . '...'
+        ]);
         
         // Generate refresh token with longer TTL
         // Create custom claims for refresh token
@@ -83,14 +91,18 @@ class AuthController extends Controller
         ];
         
         $refreshToken = JWTAuth::getJWTProvider()->encode($refreshClaims);
+        \Log::info('🔄 REFRESH TOKEN GENERATED', [
+            'refresh_token_length' => strlen($refreshToken),
+            'refresh_token_preview' => substr($refreshToken, 0, 50) . '...',
+            'refresh_claims' => $refreshClaims
+        ]);
 
-        // ENHANCED USER DATA with multi-role support
+        // ENHANCED USER DATA with pure multi-role support
         $userData = [
             'id' => $user->id,
             'name' => $user->name,
             'email' => $user->email,
-            'role' => $user->role, // Keep original role for compatibility
-            'school_id' => $user->school_id,
+            'base_role' => $user->base_role, // Authentication role (user, admin, super_admin)
             'eschool_id' => $primaryEschoolId, // Primary eschool for backward compatibility
             'primary_role' => $primaryRole, // Primary role in primary eschool
             
@@ -98,16 +110,35 @@ class AuthController extends Controller
             'eschools' => $eschoolsData, // All eschools with roles and permissions
             'total_eschools' => count($eschoolsData),
             'available_roles' => array_unique(array_column($eschoolsData, 'role_in_eschool')),
+            
+            // For backward compatibility with frontend
+            'role' => $primaryRole, // Primary role for legacy support
+            'school_id' => !empty($eschoolsData) ? $eschoolsData[0]['school_id'] : null, // First school_id for legacy
         ];
+        
+        \Log::info('👤 USER DATA PREPARED', [
+            'user_data' => $userData,
+            'jwt_ttl_minutes' => (int) config('jwt.ttl'),
+            'jwt_refresh_ttl_minutes' => (int) config('jwt.refresh_ttl')
+        ]);
  
  
 
         $response = response()->json([
             'data' => [
                 'user' => $userData,
+                'access_token' => $accessToken, // Also include in JSON for debugging
+                'refresh_token' => $refreshToken, // Also include in JSON for debugging
             ],
             'message' => 'Login successful',
+            'success' => true,
             'expires_in' => (int) config('jwt.ttl') * 60 // in seconds
+        ]);
+        
+        \Log::info('📦 RESPONSE DATA PREPARED', [
+            'includes_access_token_in_json' => true,
+            'includes_refresh_token_in_json' => true,
+            'expires_in_seconds' => (int) config('jwt.ttl') * 60
         ]);
 
         // Set access token cookie (short-lived)
@@ -122,6 +153,14 @@ class AuthController extends Controller
             false,                      // raw
             'lax'                       // sameSite
         );
+        
+        \Log::info('🍪 ACCESS TOKEN COOKIE SET', [
+            'cookie_name' => 'token',
+            'ttl_minutes' => (int) config('jwt.ttl'),
+            'path' => '/',
+            'httpOnly' => true,
+            'sameSite' => 'lax'
+        ]);
 
         // Set refresh token cookie (long-lived)
         $response->cookie(
@@ -135,6 +174,21 @@ class AuthController extends Controller
             false,                      // raw
             'lax'                       // sameSite
         );
+        
+        \Log::info('🍪 REFRESH TOKEN COOKIE SET', [
+            'cookie_name' => 'refresh_token',
+            'ttl_minutes' => (int) config('jwt.refresh_ttl'),
+            'path' => '/',
+            'httpOnly' => true,
+            'sameSite' => 'lax'
+        ]);
+
+        \Log::info('✅ LOGIN COMPLETE', [
+            'user_id' => $user->id,
+            'primary_role' => $primaryRole,
+            'cookies_set' => ['token', 'refresh_token'],
+            'response_ready' => true
+        ]);
 
         return $response;
     }
@@ -145,7 +199,7 @@ class AuthController extends Controller
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:6',
-            'role' => 'required|string|in:siswa,bendahara,koordinator,staff'
+            'base_role' => 'required|string|in:user,admin,super_admin'
         ]);
 
         if ($validator->fails()) {
@@ -156,12 +210,12 @@ class AuthController extends Controller
             'name' => $request->name,
             'email' => $request->email,
             'password' => Hash::make($request->password),
-            'role' => $request->role,
+            'base_role' => $request->base_role,
         ]);
 
         return response()->json([
             'data' => $user,
-            'message' => 'User registered successfully'
+            'message' => 'User registered successfully. Admin needs to assign eschool roles.'
         ], 201);
     }
 

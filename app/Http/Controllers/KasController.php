@@ -9,6 +9,7 @@ use App\Models\Eschool;
 use App\Models\KasRecord;
 use App\Models\KasPayment;
 use App\Models\Member;
+use App\Models\UserEschoolRole;
 
 class KasController extends Controller
 {
@@ -29,19 +30,25 @@ class KasController extends Controller
                 'payments.*.year' => 'required|integer|min:2020',
             ]);
 
-            $userId = Auth::id();
-                // Tentukan eschool_id berdasarkan role
             $user = auth()->user();
-            if ($user->isKoordinator()) {
-                $eschool = Eschool::where('coordinator_id', $userId)->first();
-            } elseif ($user->isBendahara()) {
-                $eschool = Eschool::where('treasurer_id', $userId)->first();
+            
+            // Get eschool based on multi-role system
+            $eschoolId = null;
+            if ($user->isBendahara() || $user->isKoordinator()) {
+                // Get the first active eschool where user has bendahara or koordinator role
+                $userRole = $user->eschoolRoles()
+                    ->where('status', 'active')
+                    ->whereIn('role', ['bendahara', 'koordinator'])
+                    ->with('eschool')
+                    ->first();
+                
+                if ($userRole && $userRole->eschool) {
+                    $eschoolId = $userRole->eschool->id;
+                }
             }
             
-             
-            
-            if (!$eschool) {
-                return response()->json(['message' => 'Eschool tidak ditemukan'], 404);
+            if (!$eschoolId) {
+                return response()->json(['message' => 'Eschool tidak ditemukan untuk role Anda'], 404);
             }
 
             // Check for duplicate payments before processing
@@ -71,12 +78,12 @@ class KasController extends Controller
 
             // Buat kas record untuk income
             $kasRecord = KasRecord::create([
-                'eschool_id' => $eschool->id,
+                'eschool_id' => $eschoolId,
                 'type' => 'income',
                 'amount' => collect($validated['payments'])->sum('amount'),
                 'description' => $validated['description'],
                 'date' => $validated['date'],
-                'recorder_id' => $userId,
+                'recorder_id' => $user->id, // Fixed: use $user->id instead of $userId
             ]);
 
             // Buat payment records untuk setiap member
@@ -128,27 +135,36 @@ class KasController extends Controller
                 'date' => 'required|date',
             ]);
 
-            $userId = Auth::id();
-                $user = auth()->user();
-            if ($user->isKoordinator()) {
-                $eschool = Eschool::where('coordinator_id', $userId)->first();
-            } elseif ($user->isBendahara()) {
-                $eschool = Eschool::where('treasurer_id', $userId)->first();
+            $user = auth()->user();
+            
+            // Get eschool based on multi-role system
+            $eschoolId = null;
+            if ($user->isBendahara() || $user->isKoordinator()) {
+                // Get the first active eschool where user has bendahara or koordinator role
+                $userRole = $user->eschoolRoles()
+                    ->where('status', 'active')
+                    ->whereIn('role', ['bendahara', 'koordinator'])
+                    ->with('eschool')
+                    ->first();
+                
+                if ($userRole && $userRole->eschool) {
+                    $eschoolId = $userRole->eschool->id;
+                }
             }
             
-            if (!$eschool) {
-                return response()->json(['message' => 'Eschool tidak ditemukan'], 404);
+            if (!$eschoolId) {
+                return response()->json(['message' => 'Eschool tidak ditemukan untuk role Anda'], 404);
             }
 
             // Buat kas record untuk expense
             $kasRecord = KasRecord::create([
-                'eschool_id' => $eschool->id,
+                'eschool_id' => $eschoolId,
                 'type' => 'expense',
                 'amount' => $validated['amount'],
                 'description' => $validated['description'],
                 'category' => $validated['category'] ?? null,
                 'date' => $validated['date'],
-                'recorder_id' => $userId,
+                'recorder_id' => $user->id,
             ]);
 
             return response()->json([
@@ -173,28 +189,37 @@ class KasController extends Controller
     }
 
     /**
-     * Get kas records history
+     * Get kas records history (Multi-Role Version)
      */
     public function getKasRecords(Request $request)
     {
         try {
-            $userId = Auth::id();
             $user = auth()->user();
-            if ($user->isKoordinator()) {
-                $eschool = Eschool::where('coordinator_id', $userId)->first();
-            } elseif ($user->isBendahara()) {
-                $eschool = Eschool::where('treasurer_id', $userId)->first();
+            
+            // Get eschool based on multi-role system
+            $eschoolId = null;
+            if ($user->isBendahara() || $user->isKoordinator()) {
+                // Get the first active eschool where user has bendahara or koordinator role
+                $userRole = $user->eschoolRoles()
+                    ->where('status', 'active')
+                    ->whereIn('role', ['bendahara', 'koordinator'])
+                    ->with('eschool')
+                    ->first();
+                
+                if ($userRole && $userRole->eschool) {
+                    $eschoolId = $userRole->eschool->id;
+                }
             }
             
-            if (!$eschool) {
-                return response()->json(['message' => 'Eschool tidak ditemukan'], 404);
+            if (!$eschoolId) {
+                return response()->json(['message' => 'Eschool tidak ditemukan untuk role Anda'], 404);
             }
 
             $perPage = $request->get('per_page', 20);
             $page = $request->get('page', 1);
 
             $query = KasRecord::with(['payments.member.user', 'recorder'])
-                ->where('eschool_id', $eschool->id)
+                ->where('eschool_id', $eschoolId)
                 ->orderBy('date', 'desc')
                 ->orderBy('created_at', 'desc');
 
@@ -265,43 +290,55 @@ class KasController extends Controller
     }
 
     /**
-     * Get kas summary for dashboard
+     * Get kas summary for dashboard (Multi-Role Version)
      */
     public function getSummary()
     {
         try {
-            $userId = Auth::id();
-                $user = auth()->user();
-            if ($user->isKoordinator()) {
-                $eschool = Eschool::where('coordinator_id', $userId)->first();
-            } elseif ($user->isBendahara()) {
-                $eschool = Eschool::where('treasurer_id', $userId)->first();
+            $user = auth()->user();
+            
+            // Get eschool based on multi-role system
+            $eschoolId = null;
+            if ($user->isBendahara() || $user->isKoordinator()) {
+                // Get the first active eschool where user has bendahara or koordinator role
+                $userRole = $user->eschoolRoles()
+                    ->where('status', 'active')
+                    ->whereIn('role', ['bendahara', 'koordinator'])
+                    ->with('eschool')
+                    ->first();
+                
+                if ($userRole && $userRole->eschool) {
+                    $eschoolId = $userRole->eschool->id;
+                }
             }
             
-            if (!$eschool) {
-                return response()->json(['message' => 'Eschool tidak ditemukan'], 404);
+            if (!$eschoolId) {
+                return response()->json(['message' => 'Eschool tidak ditemukan untuk role Anda'], 404);
             }
 
             // Calculate total income and expense
-            $totalIncome = KasRecord::where('eschool_id', $eschool->id)
+            $totalIncome = KasRecord::where('eschool_id', $eschoolId)
                 ->where('type', 'income')
                 ->sum('amount');
 
-            $totalExpense = KasRecord::where('eschool_id', $eschool->id)
+            $totalExpense = KasRecord::where('eschool_id', $eschoolId)
                 ->where('type', 'expense')
                 ->sum('amount');
 
             $balance = $totalIncome - $totalExpense;
 
-            // Count total active members using many-to-many relationship
-            $totalMembers = $eschool->members()->where('is_active', true)->count();
+            // Count total active members using multi-role system
+            $totalMembers = \App\Models\UserEschoolRole::where('eschool_id', $eschoolId)
+                ->where('role', 'member')
+                ->where('status', 'active')
+                ->count();
 
             // Current month payment statistics
             $currentMonth = date('n');
             $currentYear = date('Y');
 
-            $paidThisMonth = KasPayment::whereHas('kasRecord', function ($query) use ($eschool) {
-                    $query->where('eschool_id', $eschool->id);
+            $paidThisMonth = KasPayment::whereHas('kasRecord', function ($query) use ($eschoolId) {
+                    $query->where('eschool_id', $eschoolId);
                 })
                 ->where('month', $currentMonth)
                 ->where('year', $currentYear)
@@ -311,6 +348,9 @@ class KasController extends Controller
             $unpaidThisMonth = $totalMembers - $paidThisMonth;
             $paymentPercentage = $totalMembers > 0 ? ($paidThisMonth / $totalMembers) * 100 : 0;
 
+            // Get eschool data
+            $eschool = \App\Models\Eschool::find($eschoolId);
+            
             return response()->json([
                 'eschool' => [
                     'name' => $eschool->name,
@@ -341,45 +381,56 @@ class KasController extends Controller
 
 
     public function checkPayment(Request $request)
-{
-    $request->validate([
-        'member_id' => 'required|integer|exists:members,id',
-        'month' => 'required|integer|between:1,12',
-        'year' => 'required|integer|min:2020|max:2100',
-    ]);
+    {
+        $request->validate([
+            'member_id' => 'required|integer|exists:members,id',
+            'month' => 'required|integer|between:1,12',
+            'year' => 'required|integer|min:2020|max:2100',
+        ]);
 
-    $userId = Auth::id();
-    $user = auth()->user();
+        $user = auth()->user();
 
-    // Tentukan eschool_id berdasarkan role
-    if ($user->isKoordinator()) {
-        $eschool = Eschool::where('coordinator_id', $userId)->first();
-    } elseif ($user->isBendahara()) {
-        $eschool = Eschool::where('treasurer_id', $userId)->first();
-    } else {
-        return response()->json(['message' => 'Unauthorized. Only coordinator or treasurer can access this.'], 403);
+        // Get eschool based on multi-role system
+        $eschoolId = null;
+        if ($user->isBendahara() || $user->isKoordinator()) {
+            // Get the first active eschool where user has bendahara or koordinator role
+            $userRole = $user->eschoolRoles()
+                ->where('status', 'active')
+                ->whereIn('role', ['bendahara', 'koordinator'])
+                ->with('eschool')
+                ->first();
+            
+            if ($userRole && $userRole->eschool) {
+                $eschoolId = $userRole->eschool->id;
+            }
+        }
+        
+        if (!$eschoolId) {
+            return response()->json(['message' => 'Eschool tidak ditemukan untuk role Anda'], 404);
+        }
+
+        // Cek jika member terkait eschool menggunakan multi-role system
+        $memberRole = \App\Models\UserEschoolRole::where('eschool_id', $eschoolId)
+            ->where('role', 'member')
+            ->where('status', 'active')
+            ->whereHas('user.member', function($query) use ($request) {
+                $query->where('id', $request->member_id);
+            })
+            ->first();
+
+        if (!$memberRole) {
+            return response()->json(['exists' => false, 'message' => 'Member tidak terdaftar di eschool ini'], 422);
+        }
+
+        // Cek jika pembayaran sudah ada
+        $exists = KasPayment::where('member_id', $request->member_id)
+            ->where('month', $request->month)
+            ->where('year', $request->year)
+            ->where('is_paid', true)
+            ->exists();
+
+        return response()->json(['exists' => $exists]);
     }
-
-    if (!$eschool) {
-        return response()->json(['message' => 'Eschool tidak ditemukan untuk user ini'], 404);
-    }
-
-    // Cek jika member terkait eschool menggunakan relasi many-to-many
-    $member = $eschool->members()->where('members.id', $request->member_id)->first();
-
-    if (!$member) {
-        return response()->json(['exists' => false, 'message' => 'Member tidak terdaftar di eschool ini'], 422);
-    }
-
-    // Cek jika pembayaran sudah ada
-    $exists = KasPayment::where('member_id', $request->member_id)
-        ->where('month', $request->month)
-        ->where('year', $request->year)
-        ->where('is_paid', true)
-        ->exists();
-
-    return response()->json(['exists' => $exists]);
-}
 
     /**
      * Export kas records as CSV

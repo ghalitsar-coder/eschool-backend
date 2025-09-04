@@ -435,10 +435,10 @@ class EschoolController extends Controller
                 ], 403);
             }
             
-            // Get users with member role from the specified school
+            // Get users with siswa base_role from the specified school
             // These are students who can be selected as treasurer
             $members = User::where('school_id', $schoolId)
-                            ->where('role', 'siswa')
+                            ->where('base_role', 'siswa')  // Changed from 'role' to 'base_role'
                             ->select('id', 'name', 'email')
                             ->get();
             

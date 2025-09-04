@@ -185,6 +185,7 @@ class User extends Authenticatable implements JWTSubject
         return $eschoolRoles->map(function ($role) {
             return [
                 'eschool_id' => $role->eschool_id,
+                'school_id' => $role->school_id, // Added school_id from UserEschoolRole
                 'eschool_name' => $role->eschool->name ?? 'Unknown',
                 'eschool_description' => $role->eschool->description ?? '',
                 'role_in_eschool' => $role->role,
