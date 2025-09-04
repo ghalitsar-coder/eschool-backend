@@ -145,6 +145,9 @@ Route::middleware('auth:api')->group(function () {
         Route::get('/member/kas', [\App\Http\Controllers\MemberProfileController::class, 'getFilteredKasData']);
         Route::get('/member/attendance/export', [\App\Http\Controllers\MemberProfileController::class, 'exportAttendanceData']);
         Route::get('/member/kas/export', [\App\Http\Controllers\MemberProfileController::class, 'exportKasData']);
+        
+        // Multi-role profile route
+        Route::get('/profile/multi-role', [\App\Http\Controllers\MultiRoleProfileController::class, 'getMultiRoleProfile']);
     });
 
     // Routes khusus bendahara & koordinator (termasuk member management)
