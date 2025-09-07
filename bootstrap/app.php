@@ -22,8 +22,8 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware) {
         // Register middleware alias
         $middleware->alias([
-            // 'role' => \App\Http\Middleware\CheckRole::class,
-            // 'eschool.role' => \App\Http\Middleware\CheckEschoolRole::class,
+            'role' => \App\Http\Middleware\CheckRole::class,
+            'eschool.role' => \App\Http\Middleware\CheckEschoolRole::class,
             'auth' => \App\Http\Middleware\Authenticate::class,
             'jwt.cookie' => \App\Http\Middleware\JWTFromCookie::class,
             'auth.basic' => \Illuminate\Auth\Middleware\AuthenticateWithBasicAuth::class,

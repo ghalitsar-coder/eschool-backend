@@ -22,16 +22,16 @@ class JWTFromCookie
     public function handle(Request $request, Closure $next)
     {
         // Log untuk debugging
-        Log::info('JWTFromCookie middleware called', [
-            'has_cookie' => $request->hasCookie('token'),
-            'cookie_names' => array_keys($request->cookies->all())
-        ]);
+        // Log::info('JWTFromCookie middleware called', [
+        //     'has_cookie' => $request->hasCookie('token'),
+        //     'cookie_names' => array_keys($request->cookies->all())
+        // ]);
         
         // Cek apakah token ada di cookie
         if ($request->hasCookie('token')) {
             $token = $request->cookie('token');
             
-            Log::info('Token found in cookie', ['token' => substr($token, 0, 20) . '...']);
+            // Log::info('Token found in cookie', ['token' => substr($token, 0, 20) . '...']);
             
             try {
                 // Set token ke JWTAuth
@@ -40,7 +40,7 @@ class JWTFromCookie
                 // Coba autentikasi user
                 $user = JWTAuth::authenticate();
                 
-                Log::info('User authenticated', ['user_id' => $user ? $user->id : null]);
+                // Log::info('User authenticated', ['user_id' => $user ? $user->id : null]);
                 
                 // Set user ke request jika user ditemukan
                 if ($user) {

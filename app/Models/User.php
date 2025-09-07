@@ -7,6 +7,7 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Tymon\JWTAuth\Contracts\JWTSubject;
 use App\Models\Profile;
+use App\Models\UserEschoolRole;
 
 class User extends Authenticatable implements JWTSubject
 {
@@ -56,6 +57,14 @@ class User extends Authenticatable implements JWTSubject
     }
 
     /**
+     * Get the user eschool roles for the user.
+     */
+    public function userEschoolRoles()
+    {
+        return $this->hasMany(UserEschoolRole::class);
+    }
+
+    /**
      * Get the identifier that will be stored in the subject claim of the JWT.
      *
      * @return mixed
@@ -73,5 +82,30 @@ class User extends Authenticatable implements JWTSubject
     public function getJWTCustomClaims()
     {
         return [];
+    }
+
+     /**
+     * Check if user has specific role(s)
+     *
+     * @param string|array $roles
+     * @return bool
+     */
+    public function hasRole($roles)
+    {
+        // Ensure userEschoolRoles relation is loaded
+        if (!$this->relationLoaded('userEschoolRoles')) {
+            $this->load('userEschoolRoles');
+        }
+        
+        // Get user's roles from user_eschool_roles table
+        $userRoles = $this->userEschoolRoles->pluck('role')->toArray();
+        
+        if (is_array($roles)) {
+            // Check if user has any of the specified roles
+            return !empty(array_intersect($roles, $userRoles));
+        }
+        
+        // Check if user has the specific role
+        return in_array($roles, $userRoles);
     }
 }
