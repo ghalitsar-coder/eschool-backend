@@ -7,6 +7,7 @@ use App\Http\Requests\RegisterRequest;
 use App\Http\Requests\LoginRequest;
 use App\Models\User;
 use App\Models\Profile;
+use App\Models\UserEschoolRole;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Hash;
@@ -40,21 +41,33 @@ class AuthController extends Controller
 
             // Generate token for new user
             $token = JWTAuth::fromUser($user);
+            
+            // Generate refresh token
+            $refreshToken = JWTAuth::fromSubject($user);
+            
+            // Set refresh token to expire in 2 weeks (default)
+            $refreshTokenExpires = config('jwt.refresh_ttl', 20160); // 2 weeks in minutes
 
-            // Return response with token in cookie
+            // Get user's roles
+            $userRoles = $this->getUserRoles($user);
+
+            // Return response with tokens in cookies
             return response()->json([
                 'message' => 'User registered successfully',
                 'user' => [
                     'id' => $user->id,
                     'name' => $user->name,
                     'email' => $user->email,
-                    'profile' => $user->profile
+                    'profile' => $user->profile,
+                    'roles' => $userRoles
                 ],
                 'token_info' => [
                     'type' => 'Bearer',
                     'expires_in' => config('jwt.ttl') * 60 // Convert minutes to seconds
                 ]
-            ], 201)->cookie('token', $token, config('jwt.ttl'), '/', null, false, true);
+            ], 201)
+            ->cookie('token', $token, config('jwt.ttl'), '/', null, false, true)
+            ->cookie('refresh_token', $refreshToken, $refreshTokenExpires, '/', null, false, true);
             
         } catch (\Exception $e) {
             return response()->json([
@@ -87,21 +100,33 @@ class AuthController extends Controller
             // Get authenticated user with profile
             $user = auth()->user();
             $user->load('profile');
+            
+            // Generate refresh token
+            $refreshToken = JWTAuth::fromSubject($user);
+            
+            // Set refresh token to expire in 2 weeks (default)
+            $refreshTokenExpires = config('jwt.refresh_ttl', 20160); // 2 weeks in minutes
 
-            // Return response with token in cookie
+            // Get user's roles
+            $userRoles = $this->getUserRoles($user);
+
+            // Return response with tokens in cookies
             return response()->json([
                 'message' => 'User logged in successfully',
                 'user' => [
                     'id' => $user->id,
                     'name' => $user->name,
                     'email' => $user->email,
-                    'profile' => $user->profile
+                    'profile' => $user->profile,
+                    'roles' => $userRoles
                 ],
                 'token_info' => [
                     'type' => 'Bearer',
                     'expires_in' => config('jwt.ttl') * 60 // Convert minutes to seconds
                 ]
-            ], 200)->cookie('token', $token, config('jwt.ttl'), '/', null, false, true);
+            ], 200)
+            ->cookie('token', $token, config('jwt.ttl'), '/', null, false, true)
+            ->cookie('refresh_token', $refreshToken, $refreshTokenExpires, '/', null, false, true);
             
         } catch (JWTException $e) {
             return response()->json([
@@ -132,10 +157,12 @@ class AuthController extends Controller
             // Logout user and invalidate token
             JWTAuth::invalidate($token);
 
-            // Return response and remove cookie
+            // Return response and remove cookies
             return response()->json([
                 'message' => 'User logged out successfully'
-            ], 200)->withoutCookie('token');
+            ], 200)
+            ->withoutCookie('token')
+            ->withoutCookie('refresh_token');
             
         } catch (JWTException $e) {
             return response()->json([
@@ -165,25 +192,37 @@ class AuthController extends Controller
             
             // Refresh token
             $newToken = JWTAuth::refresh($currentToken);
-
-            // Get user data
+            
+            // Get the authenticated user
             $user = JWTAuth::setToken($newToken)->toUser();
             $user->load('profile');
+            
+            // Generate new refresh token
+            $newRefreshToken = JWTAuth::fromSubject($user);
+            
+            // Set refresh token to expire in 2 weeks (default)
+            $refreshTokenExpires = config('jwt.refresh_ttl', 20160); // 2 weeks in minutes
 
-            // Return response with new token in cookie
+            // Get user's roles
+            $userRoles = $this->getUserRoles($user);
+
+            // Return response with new tokens in cookies
             return response()->json([
                 'message' => 'Token refreshed successfully',
                 'user' => [
                     'id' => $user->id,
                     'name' => $user->name,
                     'email' => $user->email,
-                    'profile' => $user->profile
+                    'profile' => $user->profile,
+                    'roles' => $userRoles
                 ],
                 'token_info' => [
                     'type' => 'Bearer',
                     'expires_in' => config('jwt.ttl') * 60 // Convert minutes to seconds
                 ]
-            ], 200)->cookie('token', $newToken, config('jwt.ttl'), '/', null, false, true);
+            ], 200)
+            ->cookie('token', $newToken, config('jwt.ttl'), '/', null, false, true)
+            ->cookie('refresh_token', $newRefreshToken, $refreshTokenExpires, '/', null, false, true);
             
         } catch (JWTException $e) {
             return response()->json([
@@ -224,6 +263,9 @@ class AuthController extends Controller
             // Load profile relationship
             $user->load('profile');
             
+            // Get user's roles
+            $userRoles = $this->getUserRoles($user);
+            
             return response()->json([
                 'user' => [
                     'id' => $user->id,
@@ -231,6 +273,7 @@ class AuthController extends Controller
                     'email' => $user->email,
                     'email_verified_at' => $user->email_verified_at,
                     'profile' => $user->profile,
+                    'roles' => $userRoles,
                     'created_at' => $user->created_at,
                     'updated_at' => $user->updated_at
                 ]
@@ -242,5 +285,34 @@ class AuthController extends Controller
                 'message' => 'Token may be invalid or expired'
             ], 401);
         }
+    }
+    
+    /**
+     * Get user's roles from user_eschool_roles table
+     *
+     * @param User $user
+     * @return array
+     */
+    private function getUserRoles(User $user)
+    {
+        // Get all roles for the user
+        $userEschoolRoles = UserEschoolRole::where('user_id', $user->id)
+            ->with('eschool')
+            ->get();
+        
+        // Transform the roles into the required format
+        $roles = [];
+        foreach ($userEschoolRoles as $userEschoolRole) {
+            $roles[] = [
+                'id' => $userEschoolRole->id,
+                'role' => $userEschoolRole->role,
+                'eschool_id' => $userEschoolRole->eschool_id,
+                'eschool_name' => $userEschoolRole->eschool ? $userEschoolRole->eschool->name : null,
+                'created_at' => $userEschoolRole->created_at,
+                'updated_at' => $userEschoolRole->updated_at
+            ];
+        }
+        
+        return $roles;
     }
 }
