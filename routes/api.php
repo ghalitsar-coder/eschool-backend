@@ -45,6 +45,7 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/kas/records/{eschoolId}', [KasRecordController::class, 'index']);
     Route::put('/kas/records/{id}', [KasRecordController::class, 'update']);
     Route::delete('/kas/records/{id}', [KasRecordController::class, 'destroy']);
+    Route::get('/kas/export/{eschoolId}', [KasRecordController::class, 'export']);
     
     // Kas Payment routes
     Route::post('/kas/payments', [KasPaymentController::class, 'store']);

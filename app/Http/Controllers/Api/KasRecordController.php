@@ -11,6 +11,7 @@ use App\Models\KasPayment;
 use App\Models\UserEschoolRole;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Http\Request;
 
 class KasRecordController extends Controller
 {
@@ -208,9 +209,10 @@ class KasRecordController extends Controller
      * Get all financial records for an eschool
      *
      * @param int $eschoolId
+     * @param \Illuminate\Http\Request $request
      * @return JsonResponse
      */
-    public function index($eschoolId): JsonResponse
+    public function index($eschoolId, Request $request): JsonResponse
     {
         try {
             // Check if eschool exists
@@ -249,26 +251,81 @@ class KasRecordController extends Controller
                 ], 403);
             }
 
-            // Get kas records for this eschool
-            $kasRecords = KasRecord::where('eschool_id', $eschoolId)
-                ->with(['kasPayments.member.user.profile', 'recorder.user.profile'])
-                ->get();
+            // Get filter parameters
+            $type = $request->get('type');
+            $search = $request->get('search');
+            $month = $request->get('month');
+            $year = $request->get('year');
+            $dateFrom = $request->get('date_from');
+            $dateTo = $request->get('date_to');
+            $page = $request->get('page', 1);
+            $perPage = $request->get('per_page', 10);
+
+            // Build query for kas records
+            $query = KasRecord::where('eschool_id', $eschoolId)
+                ->with(['kasPayments.member.user.profile', 'recorder.user.profile']);
+
+            // Apply type filter
+            if ($type === 'income') {
+                $query->where('amount', '>', 0);
+            } elseif ($type === 'expense') {
+                $query->where('amount', '<', 0);
+            }
+
+            // Apply search filter
+            if ($search) {
+                $query->where(function($q) use ($search) {
+                    $q->where('description', 'LIKE', "%{$search}%")
+                      ->orWhere('category', 'LIKE', "%{$search}%");
+                });
+            }
+
+            // Apply month filter
+            if ($month) {
+                $query->whereMonth('date', $month);
+            }
+
+            // Apply year filter
+            if ($year) {
+                $query->whereYear('date', $year);
+            }
+
+            // Apply date range filter
+            if ($dateFrom) {
+                $query->where('date', '>=', $dateFrom);
+            }
+
+            if ($dateTo) {
+                $query->where('date', '<=', $dateTo);
+            }
+
+            // Get records with pagination
+            $kasRecords = $query->orderBy('date', 'desc')->paginate($perPage, ['*'], 'page', $page);
 
             // Calculate summary
-            $totalIncome = $kasRecords->where('amount', '>', 0)->sum('amount');
-            $totalExpense = $kasRecords->where('amount', '<', 0)->sum('amount');
+            $allRecords = KasRecord::where('eschool_id', $eschoolId)->get();
+            $totalIncome = $allRecords->where('amount', '>', 0)->sum('amount');
+            $totalExpense = $allRecords->where('amount', '<', 0)->sum('amount');
             $balance = $totalIncome + $totalExpense;
 
             return response()->json([
                 'success' => true,
                 'message' => 'Financial records retrieved successfully.',
                 'data' => [
-                    'kas_records' => $kasRecords,
+                    'kas_records' => $kasRecords->items(),
                     'summary' => [
                         'total_income' => $totalIncome,
                         'total_expense' => abs($totalExpense),
                         'balance' => $balance
                     ]
+                ],
+                'pagination' => [
+                    'current_page' => $kasRecords->currentPage(),
+                    'last_page' => $kasRecords->lastPage(),
+                    'per_page' => $kasRecords->perPage(),
+                    'total' => $kasRecords->total(),
+                    'from' => $kasRecords->firstItem(),
+                    'to' => $kasRecords->lastItem()
                 ]
             ], 200);
         } catch (\Exception $e) {
@@ -373,6 +430,165 @@ class KasRecordController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to delete financial record.',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Export kas records to CSV
+     *
+     * @param int $eschoolId
+     * @param \Illuminate\Http\Request $request
+     * @return \Symfony\Component\HttpFoundation\BinaryFileResponse
+     */
+    public function export($eschoolId, Request $request)
+    {
+        try {
+            // Check if eschool exists
+            $eschool = \App\Models\Eschool::find($eschoolId);
+            if (!$eschool) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Eschool not found.'
+                ], 404);
+            }
+
+            // Check if user has access (treasurer or staff)
+            $user = auth()->user();
+            $userRole = UserEschoolRole::where('user_id', $user->id)
+                ->where('eschool_id', $eschoolId)
+                ->first();
+
+            // If user has no role in this eschool, check if they are staff
+            $isStaff = false;
+            if (!$userRole) {
+                $staffRole = UserEschoolRole::where('user_id', $user->id)
+                    ->where('role', 'supervisor')
+                    ->whereHas('eschool', function ($query) use ($eschoolId) {
+                        $query->where('school_id', \App\Models\Eschool::find($eschoolId)->school_id);
+                    })
+                    ->first();
+                
+                $isStaff = !!$staffRole;
+            }
+
+            // If user is not treasurer, member, or staff of this school, deny access
+            if (!$userRole && !$isStaff) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'You do not have permission to export financial records for this eschool.'
+                ], 403);
+            }
+
+            // Get filter parameters
+            $type = $request->get('type');
+            $dateFrom = $request->get('date_from');
+            $dateTo = $request->get('date_to');
+
+            // Build query for kas records
+            $query = KasRecord::where('eschool_id', $eschoolId)
+                ->with(['kasPayments.member.user.profile', 'recorder.user.profile']);
+
+            // Apply type filter
+            if ($type === 'income') {
+                $query->where('amount', '>', 0);
+            } elseif ($type === 'expense') {
+                $query->where('amount', '<', 0);
+            }
+
+            // Apply date range filter
+            if ($dateFrom) {
+                $query->where('date', '>=', $dateFrom);
+            }
+
+            if ($dateTo) {
+                $query->where('date', '<=', $dateTo);
+            }
+
+            // Get records
+            $kasRecords = $query->orderBy('date', 'desc')->get();
+
+            // Create CSV header
+            $csvContent = "ID,Tanggal Transaksi,Tipe,Deskripsi,Jumlah Total,Kategori,Dicatat Oleh,Tanggal Dibuat,Tanggal Diupdate,Nama Anggota,Jumlah Pembayaran,Periode Bulan,Periode Tahun\n";
+            
+            // Process each record
+            foreach ($kasRecords as $record) {
+                $type = $record->amount > 0 ? 'income' : 'expense';
+                $amount = abs($record->amount);
+                $recordedBy = $record->recorder && $record->recorder->user && $record->recorder->user->profile 
+                    ? $record->recorder->user->profile->name 
+                    : 'Unknown';
+                
+                // Format dates for better readability
+                $transactionDate = date('d/m/Y', strtotime($record->date));
+                $createdAt = date('d/m/Y H:i', strtotime($record->created_at));
+                $updatedAt = date('d/m/Y H:i', strtotime($record->updated_at));
+                
+                // For income records with payments, create a row for each payment
+                if ($type === 'income' && $record->kasPayments->count() > 0) {
+                    foreach ($record->kasPayments as $payment) {
+                        $memberName = $payment->member && $payment->member->user && $payment->member->user->profile 
+                            ? $payment->member->user->profile->name 
+                            : 'Unknown Member';
+                        
+                        $csvContent .= sprintf(
+                            "%d,%s,%s,\"%s\",%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
+                            $record->id,
+                            $transactionDate,
+                            $type,
+                            str_replace('"', '""', $record->description),
+                            number_format($amount, 2, '.', ''),
+                            $record->category ?? '',
+                            $recordedBy,
+                            $createdAt,
+                            $updatedAt,
+                            $memberName,
+                            number_format($payment->amount, 2, '.', ''),
+                            $payment->month,
+                            $payment->year
+                        );
+                    }
+                } 
+                // For expense records or income records without payments, create a single row
+                else {
+                    $memberName = '';
+                    $paymentAmount = '';
+                    $paymentMonth = '';
+                    $paymentYear = '';
+                    
+                    $csvContent .= sprintf(
+                        "%d,%s,%s,\"%s\",%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
+                        $record->id,
+                        $transactionDate,
+                        $type,
+                        str_replace('"', '""', $record->description),
+                        number_format($amount, 2, '.', ''),
+                        $record->category ?? '',
+                        $recordedBy,
+                        $createdAt,
+                        $updatedAt,
+                        $memberName,
+                        $paymentAmount,
+                        $paymentMonth,
+                        $paymentYear
+                    );
+                }
+            }
+
+            // Create file
+            $filename = 'kas_records_' . $eschool->name . '_' . date('Y-m-d_H-i-s') . '.csv';
+            $filePath = storage_path('app/' . $filename);
+            
+            // Write CSV content to file without BOM
+            file_put_contents($filePath, $csvContent);
+
+            // Return file as download
+            return response()->download($filePath)->deleteFileAfterSend(true);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to export financial records.',
                 'error' => $e->getMessage()
             ], 500);
         }
