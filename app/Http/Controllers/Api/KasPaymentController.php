@@ -215,6 +215,11 @@ class KasPaymentController extends Controller
 
             $totalExpected = $totalMembers * $eschool->monthly_fee_amount;
             $totalCollected = $paymentRecords->where('is_paid', true)->sum('amount');
+            
+            // Calculate total income and expense
+            $totalIncome = $kasRecords->where('amount', '>', 0)->sum('amount');
+            $totalExpense = $kasRecords->where('amount', '<', 0)->sum('amount');
+            $balance = $totalIncome + $totalExpense; // Expenses are negative, so we add them
 
             return response()->json([
                 'success' => true,
@@ -227,7 +232,10 @@ class KasPaymentController extends Controller
                         'unpaid_members' => $unpaidMembers,
                         'payment_percentage' => $paymentPercentage,
                         'total_expected' => $totalExpected,
-                        'total_collected' => $totalCollected
+                        'total_collected' => $totalCollected,
+                        'total_income' => abs($totalIncome), // Make it positive for display
+                        'total_expense' => abs($totalExpense), // Make it positive for display
+                        'balance' => $balance
                     ]
                 ]
             ], 200);
