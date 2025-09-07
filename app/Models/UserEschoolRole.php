@@ -2,69 +2,66 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use App\Models\User;
+use App\Models\Eschool;
+use App\Models\AttendanceRecord;
+use App\Models\KasPayment;
 
 class UserEschoolRole extends Model
 {
+    use HasFactory;
+
+    /**
+     * The attributes that are mass assignable.
+     *
+     * @var array<int, string>
+     */
     protected $fillable = [
         'user_id',
-        'eschool_id', 
+        'eschool_id',
         'role',
-        'assigned_at',
-        'status',
-        'notes'
     ];
-    
+
+    /**
+     * The attributes that should be cast.
+     *
+     * @var array<string, string>
+     */
     protected $casts = [
-        'assigned_at' => 'datetime',
+        'role' => 'string',
     ];
-    
-    // Relationships
-    public function user(): BelongsTo
+
+    /**
+     * Get the user that owns the user eschool role.
+     */
+    public function user()
     {
         return $this->belongsTo(User::class);
     }
-    
-    public function eschool(): BelongsTo
+
+    /**
+     * Get the eschool that owns the user eschool role.
+     */
+    public function eschool()
     {
         return $this->belongsTo(Eschool::class);
     }
-    
-    // Helper methods
-    public function getPermissions(): array
+
+    /**
+     * Get the attendance records for the user eschool role.
+     */
+    public function attendanceRecords()
     {
-        return match($this->role) {
-            'koordinator' => ['manage_eschool', 'manage_members', 'manage_attendance', 'view_all_reports', 'assign_roles'],
-            'bendahara' => ['manage_kas', 'view_all_kas', 'approve_transactions', 'view_kas_reports', 'view_members'],
-            'member' => ['view_own_kas', 'view_attendance', 'view_own_profile', 'submit_attendance'],
-            default => []
-        };
+        return $this->hasMany(AttendanceRecord::class);
     }
-    
-    public function hasPermission(string $permission): bool
+
+    /**
+     * Get the kas payments for the user eschool role.
+     */
+    public function kasPayments()
     {
-        return in_array($permission, $this->getPermissions());
-    }
-    
-    public function isActive(): bool
-    {
-        return $this->status === 'active';
-    }
-    
-    // Scopes
-    public function scopeActive($query)
-    {
-        return $query->where('status', 'active');
-    }
-    
-    public function scopeByRole($query, string $role)
-    {
-        return $query->where('role', $role);
-    }
-    
-    public function scopeByEschool($query, int $eschoolId)
-    {
-        return $query->where('eschool_id', $eschoolId);
+        return $this->hasMany(KasPayment::class);
     }
 }

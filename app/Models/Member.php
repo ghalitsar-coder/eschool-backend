@@ -4,80 +4,49 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use App\Models\User;
+use App\Models\School;
+use App\Models\Eschool;
 
 class Member extends Model
 {
     use HasFactory;
 
+    /**
+     * The attributes that are mass assignable.
+     *
+     * @var array<int, string>
+     */
     protected $fillable = [
-        'school_id',
         'user_id',
-        'nip',
-        'name',
+        'school_id',
         'student_id',
-        'date_of_birth',
-        'gender',
-        'address',
-        'phone',
-        'email',
-        'status',
-        'is_active',
+        'grade_level',
     ];
 
-    protected $casts = [
-        'date_of_birth' => 'date',
-        'is_active' => 'boolean',
-    ];
-
-    // Automatically sync name from user when saving
-    public static function boot()
-    {
-        parent::boot();
-
-        // When creating or updating a member, sync the name from the user
-        static::creating(function ($member) {
-            if ($member->user_id && empty($member->name)) {
-                $user = User::find($member->user_id);
-                if ($user) {
-                    $member->name = $user->name;
-                }
-            }
-        });
-
-        static::updating(function ($member) {
-            if ($member->isDirty('user_id') && $member->user_id) {
-                $user = User::find($member->user_id);
-                if ($user) {
-                    $member->name = $user->name;
-                }
-            }
-        });
-    }
-
-    // Define relationships
-    public function school()
-    {
-        return $this->belongsTo(School::class);
-    }
-
-    // Define many-to-many relationship with Eschool
-    public function eschools()
-    {
-        return $this->belongsToMany(Eschool::class, 'eschool_member');
-    }
-
+    /**
+     * Get the user that owns the member.
+     */
     public function user()
     {
         return $this->belongsTo(User::class);
     }
 
-    public function kasPayments()
+    /**
+     * Get the school that owns the member.
+     */
+    public function school()
     {
-        return $this->hasMany(KasPayment::class);
+        return $this->belongsTo(School::class);
     }
 
-    public function attendanceRecords()
+    /**
+     * The eschools that belong to the member.
+     */
+    public function eschools()
     {
-        return $this->hasMany(AttendanceRecord::class);
+        return $this->belongsToMany(Eschool::class, 'user_eschool_roles', 'user_id', 'eschool_id')
+            ->withPivot('role')
+            ->withTimestamps();
     }
 }

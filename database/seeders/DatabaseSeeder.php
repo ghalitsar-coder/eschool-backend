@@ -2,22 +2,28 @@
 
 namespace Database\Seeders;
 
+use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 
 class DatabaseSeeder extends Seeder
 {
     /**
      * Seed the application's database.
-     * Updated for Multi-Role System
      */
     public function run(): void
     {
-        $this->command->info('🔄 Using NEW Multi-Role Database Seeder...');
-        $this->command->line('');
-        
-        // Call the new comprehensive seeder
+        // Menjalankan seeder dalam urutan yang tepat untuk menghindari masalah foreign key
         $this->call([
-            NewDatabaseSeeder::class,
+            SchoolsTableSeeder::class,
+            ProfilesTableSeeder::class,
+            UsersTableSeeder::class,
+            TeachersTableSeeder::class,
+            StudentsTableSeeder::class,
+            EschoolsTableSeeder::class,
+            UserEschoolRolesTableSeeder::class,
+            AttendanceRecordTableSeeder::class,
+            KasRecordTableSeeder::class,
+            KasPaymentTableSeeder::class,
         ]);
     }
 }

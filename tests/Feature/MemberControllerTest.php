@@ -6,9 +6,11 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Foundation\Testing\WithFaker;
 use Tests\TestCase;
 use App\Models\User;
+use App\Models\Profile;
 use App\Models\School;
 use App\Models\Eschool;
-use App\Models\Member;
+use App\Models\Student;
+use Illuminate\Support\Facades\Hash;
 
 class MemberControllerTest extends TestCase
 {
@@ -25,17 +27,24 @@ class MemberControllerTest extends TestCase
         $school1 = School::factory()->create(['name' => 'School 1']);
         $school2 = School::factory()->create(['name' => 'School 2']);
 
+        // Create profiles
+        $profile1 = Profile::factory()->create(['name' => 'User 1']);
+        $profile2 = Profile::factory()->create(['name' => 'User 2']);
+        $profile3 = Profile::factory()->create(['name' => 'Coordinator']);
+
         // Create users
-        $user1 = User::factory()->create([
+        $user1 = User::create([
+            'profile_id' => $profile1->id,
             'name' => 'User 1',
             'email' => 'user1@test.com',
-            'role' => 'siswa'
+            'password' => Hash::make('password123'),
         ]);
         
-        $user2 = User::factory()->create([
+        $user2 = User::create([
+            'profile_id' => $profile2->id,
             'name' => 'User 2',
             'email' => 'user2@test.com',
-            'role' => 'siswa'
+            'password' => Hash::make('password123'),
         ]);
 
         // Create eschools for each school
@@ -50,40 +59,43 @@ class MemberControllerTest extends TestCase
         ]);
 
         // Create a coordinator for school 1
-        $coordinator = User::factory()->create([
+        $coordinator = User::create([
+            'profile_id' => $profile3->id,
             'name' => 'Coordinator',
             'email' => 'coordinator@test.com',
-            'role' => 'koordinator'
+            'password' => Hash::make('password123'),
         ]);
         
         // Assign coordinator to eschool1
         $eschool1->update(['coordinator_id' => $coordinator->id]);
 
-        // Create members for both schools
-        $member1 = Member::factory()->create([
+        // Create students for both schools
+        $student1 = Student::factory()->create([
             'school_id' => $school1->id,
             'user_id' => $user1->id,
-            'name' => 'Member 1'
+            'student_id' => 'STU001',
+            'grade_level' => 'X'
         ]);
         
-        $member2 = Member::factory()->create([
+        $student2 = Student::factory()->create([
             'school_id' => $school2->id,
             'user_id' => $user2->id,
-            'name' => 'Member 2'
+            'student_id' => 'STU002',
+            'grade_level' => 'XI'
         ]);
 
-        // Attach members to their respective eschools
-        $member1->eschools()->attach($eschool1);
-        $member2->eschools()->attach($eschool2);
+        // Attach students to their respective eschools
+        $student1->eschools()->attach($eschool1);
+        $student2->eschools()->attach($eschool2);
 
         // Acting as coordinator
         $response = $this->actingAs($coordinator)->get('/api/members');
 
         $response->assertStatus(200);
         
-        // Assert that coordinator only sees member from their school
-        $response->assertJsonFragment(['name' => 'Member 1']);
-        $response->assertJsonMissing(['name' => 'Member 2']);
+        // Assert that coordinator only sees student from their school
+        $response->assertJsonFragment(['name' => $user1->name]);
+        $response->assertJsonMissing(['name' => $user2->name]);
     }
 
     /**
@@ -97,38 +109,47 @@ class MemberControllerTest extends TestCase
         $school1 = School::factory()->create(['name' => 'School 1']);
         $school2 = School::factory()->create(['name' => 'School 2']);
 
+        // Create profiles
+        $profile1 = Profile::factory()->create(['name' => 'User 1']);
+        $profile2 = Profile::factory()->create(['name' => 'User 2']);
+        $profile3 = Profile::factory()->create(['name' => 'Staff']);
+
         // Create users
-        $user1 = User::factory()->create([
+        $user1 = User::create([
+            'profile_id' => $profile1->id,
             'name' => 'User 1',
             'email' => 'user1@test.com',
-            'role' => 'siswa'
+            'password' => Hash::make('password123'),
         ]);
         
-        $user2 = User::factory()->create([
+        $user2 = User::create([
+            'profile_id' => $profile2->id,
             'name' => 'User 2',
             'email' => 'user2@test.com',
-            'role' => 'siswa'
+            'password' => Hash::make('password123'),
         ]);
 
         // Create staff for school 1
-        $staff = User::factory()->create([
+        $staff = User::create([
+            'profile_id' => $profile3->id,
             'name' => 'Staff',
             'email' => 'staff@test.com',
-            'role' => 'staff',
-            'school_id' => $school1->id
+            'password' => Hash::make('password123'),
         ]);
 
-        // Create members for both schools
-        $member1 = Member::factory()->create([
+        // Create students for both schools
+        $student1 = Student::factory()->create([
             'school_id' => $school1->id,
             'user_id' => $user1->id,
-            'name' => 'Member 1'
+            'student_id' => 'STU001',
+            'grade_level' => 'X'
         ]);
         
-        $member2 = Member::factory()->create([
+        $student2 = Student::factory()->create([
             'school_id' => $school2->id,
             'user_id' => $user2->id,
-            'name' => 'Member 2'
+            'student_id' => 'STU002',
+            'grade_level' => 'XI'
         ]);
 
         // Acting as staff
@@ -136,8 +157,8 @@ class MemberControllerTest extends TestCase
 
         $response->assertStatus(200);
         
-        // Assert that staff only sees member from their assigned school
-        $response->assertJsonFragment(['name' => 'Member 1']);
-        $response->assertJsonMissing(['name' => 'Member 2']);
+        // Assert that staff only sees student from their assigned school
+        $response->assertJsonFragment(['name' => $user1->name]);
+        $response->assertJsonMissing(['name' => $user2->name]);
     }
 }

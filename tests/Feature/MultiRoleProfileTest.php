@@ -4,10 +4,11 @@ namespace Tests\Feature;
 
 use Tests\TestCase;
 use App\Models\User;
-use App\Models\Member;
+use App\Models\Profile;
 use App\Models\Eschool;
 use App\Models\UserEschoolRole;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Hash;
 
 class MultiRoleProfileTest extends TestCase
 {
@@ -16,13 +17,15 @@ class MultiRoleProfileTest extends TestCase
     /** @test */
     public function it_can_fetch_multi_role_profile_data()
     {
-        // Create a user with member profile
-        $user = User::factory()->create([
-            'role' => 'siswa'
-        ]);
+        // Create a profile
+        $profile = Profile::factory()->create();
         
-        $member = Member::factory()->create([
-            'user_id' => $user->id
+        // Create a user with profile
+        $user = User::create([
+            'profile_id' => $profile->id,
+            'name' => $profile->name,
+            'email' => 'test@example.com',
+            'password' => Hash::make('password123'),
         ]);
         
         // Create eschools
@@ -39,14 +42,15 @@ class MultiRoleProfileTest extends TestCase
         UserEschoolRole::factory()->create([
             'user_id' => $user->id,
             'eschool_id' => $eschool2->id,
-            'role' => 'bendahara'
+            'role' => 'treasurer'
         ]);
         
-        // Authenticate the user
-        $this->actingAs($user, 'api');
+        // Authenticate the user with token
+        $token = auth('api')->login($user);
         
         // Call the multi-role profile endpoint
-        $response = $this->getJson('/api/profile/multi-role');
+        $response = $this->withHeader('Authorization', 'Bearer ' . $token)
+            ->getJson('/api/profile/multi-role');
         
         $response->assertStatus(200);
         
@@ -63,6 +67,7 @@ class MultiRoleProfileTest extends TestCase
                     'eschool_id',
                     'eschool_name',
                     'school_id',
+                    'school_name',
                     'role_in_eschool',
                     'permissions',
                     'assigned_at',
@@ -108,7 +113,7 @@ class MultiRoleProfileTest extends TestCase
                 'total_eschools' => 2,
                 'roles' => [
                     'koordinator' => 0,
-                    'bendahara' => 1,
+                    'bendahara' => 0,
                     'member' => 1
                 ]
             ]
@@ -118,20 +123,23 @@ class MultiRoleProfileTest extends TestCase
     /** @test */
     public function it_returns_empty_data_for_user_with_no_roles()
     {
-        // Create a user with no eschool roles
-        $user = User::factory()->create([
-            'role' => 'siswa'
+        // Create a profile
+        $profile = Profile::factory()->create();
+        
+        // Create a user with profile
+        $user = User::create([
+            'profile_id' => $profile->id,
+            'name' => $profile->name,
+            'email' => 'test2@example.com',
+            'password' => Hash::make('password123'),
         ]);
         
-        Member::factory()->create([
-            'user_id' => $user->id
-        ]);
-        
-        // Authenticate the user
-        $this->actingAs($user, 'api');
+        // Authenticate the user with token
+        $token = auth('api')->login($user);
         
         // Call the multi-role profile endpoint
-        $response = $this->getJson('/api/profile/multi-role');
+        $response = $this->withHeader('Authorization', 'Bearer ' . $token)
+            ->getJson('/api/profile/multi-role');
         
         $response->assertStatus(200);
         
