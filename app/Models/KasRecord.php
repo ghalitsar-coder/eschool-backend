@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use App\Models\Eschool;
 use App\Models\KasPayment;
+use App\Models\UserEschoolRole;
 
 class KasRecord extends Model
 {
@@ -56,5 +57,13 @@ class KasRecord extends Model
     public function kasPayments()
     {
         return $this->hasMany(KasPayment::class);
+    }
+
+    /**
+     * Get the recorder (user eschool role) that created the kas record.
+     */
+    public function recorder()
+    {
+        return $this->belongsTo(UserEschoolRole::class, 'recorder_id');
     }
 }

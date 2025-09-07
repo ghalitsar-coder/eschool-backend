@@ -25,7 +25,7 @@ class StoreKasRecordRequest extends FormRequest
             'eschool_id' => 'required|exists:eschools,id',
             'description' => 'required|string|max:255',
             'category' => 'required|string|max:100',
-            'amount' => 'required|numeric|min:0',
+            'amount' => 'required|numeric',
             'date' => 'required|date',
         ];
     }
@@ -48,7 +48,6 @@ class StoreKasRecordRequest extends FormRequest
             'category.max' => 'Category may not be greater than 100 characters',
             'amount.required' => 'Amount is required',
             'amount.numeric' => 'Amount must be a number',
-            'amount.min' => 'Amount must be at least 0',
             'date.required' => 'Date is required',
             'date.date' => 'Date must be a valid date',
         ];

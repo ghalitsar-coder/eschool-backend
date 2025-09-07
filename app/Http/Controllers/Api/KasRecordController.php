@@ -39,6 +39,11 @@ class KasRecordController extends Controller
                 ], 403);
             }
 
+            // For expense records, ensure amount is negative
+            if ($validatedData['category'] !== 'income') {
+                $validatedData['amount'] = abs($validatedData['amount']) * -1;
+            }
+
             // Create the kas record
             $kasRecord = KasRecord::create([
                 'eschool_id' => $validatedData['eschool_id'],
@@ -90,8 +95,52 @@ class KasRecordController extends Controller
                 ], 403);
             }
 
+            // Validate for duplicate payments before processing
+            $duplicatePayments = [];
+            foreach ($validatedData['payments'] as $payment) {
+                // Check if member already paid for the same month and year
+                $existingPayment = KasPayment::where('member_id', $payment['member_id'])
+                    ->where('month', $payment['month'])
+                    ->where('year', $payment['year'])
+                    ->first();
+
+                if ($existingPayment) {
+                    // Get member name for error message
+                    $memberRole = UserEschoolRole::with('user.profile')->where('user_id', $payment['member_id'])->first();
+                    $memberName = $memberRole && $memberRole->user && $memberRole->user->profile 
+                        ? $memberRole->user->profile->name 
+                        : 'Unknown Member';
+                    
+                    $duplicatePayments[] = [
+                        'member_id' => $payment['member_id'],
+                        'member_name' => $memberName,
+                        'month' => $payment['month'],
+                        'year' => $payment['year']
+                    ];
+                }
+            }
+
+            // If there are duplicate payments, return error
+            if (!empty($duplicatePayments)) {
+                $errorMessages = [];
+                foreach ($duplicatePayments as $dup) {
+                    $errorMessages[] = "Member {$dup['member_name']} sudah membayar di bulan {$dup['month']} dan tahun {$dup['year']}";
+                }
+
+                return response()->json([
+                    'success' => false,
+                    'message' => implode('. ', $errorMessages),
+                    'errors' => [
+                        'duplicate_payments' => $duplicatePayments
+                    ]
+                ], 422);
+            }
+
             // Calculate total amount from payments
-            $totalAmount = collect($validatedData['payments'])->sum('amount');
+                $totalAmount = collect($validatedData['payments'])->sum('amount');
+                
+                // Ensure amount is positive for income
+                $totalAmount = abs($totalAmount);
 
             // Use database transaction to ensure data consistency
             DB::beginTransaction();
@@ -123,7 +172,7 @@ class KasRecordController extends Controller
                     $kasPayment = KasPayment::create([
                         'kas_record_id' => $kasRecord->id,
                         'member_id' => $payment['member_id'],
-                        'amount' => $payment['amount'],
+                        'amount' => abs($payment['amount']), // Ensure amount is positive
                         'month' => $payment['month'],
                         'year' => $payment['year'],
                         'is_paid' => true, // Payments through this endpoint are considered paid
@@ -202,7 +251,7 @@ class KasRecordController extends Controller
 
             // Get kas records for this eschool
             $kasRecords = KasRecord::where('eschool_id', $eschoolId)
-                ->with(['kasPayments', 'kasPayments.member.user.profile'])
+                ->with(['kasPayments.member.user.profile', 'recorder.user.profile'])
                 ->get();
 
             // Calculate summary
