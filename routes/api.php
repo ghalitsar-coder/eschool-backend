@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\MultiRoleProfileController;
 use App\Http\Controllers\Api\KasRecordController;
 use App\Http\Controllers\Api\KasPaymentController;
+use App\Http\Controllers\Api\ProfileController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -28,15 +29,15 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/refresh', [AuthController::class, 'refresh']);
     Route::get('/me', [AuthController::class, 'me']);
     
-    // Multi-role profile routes
-    Route::get('/profile/multi-role', [MultiRoleProfileController::class, 'getMultiRoleProfile']);
+    // Profile route
+    Route::get('/member/profile', [ProfileController::class, 'getProfile']);
     
    Route::middleware(['eschool.role:coordinator,treasurer'])->group(function () {
     // Semua route di dalam group ini pakai middleware "eschool.role"
     
-    Route::get('/members/{eschoolId}', [\App\Http\Controllers\MemberController::class, 'getMembersByEschool']);
-    // Route::post('/members/{eschoolId}', [\App\Http\Controllers\MemberController::class, 'addMember']);
-    // Route::delete('/members/{eschoolId}/{userId}', [\App\Http\Controllers\MemberController::class, 'removeMember']);
+    Route::get('/members/{eschoolId}', [App\Http\Controllers\MemberController::class, 'getMembersByEschool']);
+    // Route::post('/members/{eschoolId}', [App\Http\Controllers\MemberController::class, 'addMember']);
+    // Route::delete('/members/{eschoolId}/{userId}', [App\Http\Controllers\MemberController::class, 'removeMember']);
     });
     // Kas management routes
     // Kas Record routes
