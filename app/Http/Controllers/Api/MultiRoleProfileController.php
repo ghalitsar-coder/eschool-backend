@@ -118,29 +118,18 @@ class MultiRoleProfileController extends Controller
      */
     private function getRolePermissions($role)
     {
-        $permissions = [
-            'member' => [
-                'view_attendance' => true,
-                'view_kas' => true,
-                'pay_kas' => true,
-                'view_activities' => true
-            ],
-            'bendahara' => [
-                'view_attendance' => true,
-                'manage_kas' => true,
-                'view_kas' => true,
-                'record_payments' => true,
-                'view_activities' => true
-            ],
-            'koordinator' => [
-                'manage_attendance' => true,
-                'view_kas' => true,
-                'manage_eschool' => true,
-                'view_activities' => true
-            ]
-        ];
-        
-        return $permissions[$role] ?? $permissions['member'];
+        switch ($role) {
+            case 'supervisor':
+                return ['view_all_eschools', 'manage_members', 'view_reports', 'export_data'];
+            case 'coordinator':
+                return ['manage_attendance', 'view_members', 'export_attendance'];
+            case 'treasurer':
+                return ['manage_kas', 'view_payments', 'export_kas', 'approve_expenses'];
+            case 'member':
+                return ['view_own_data', 'make_payments'];
+            default:
+                return ['view_own_data'];
+        }
     }
     
     /**
@@ -164,13 +153,42 @@ class MultiRoleProfileController extends Controller
      */
     private function getKasSummary($userEschoolRole)
     {
-        // For now, we'll return placeholder data
-        // In a real implementation, this would query the database for actual kas data
-        return [
-            'total_managed' => 0,
-            'total_paid' => 0,
-            'outstanding_balance' => 0
-        ];
+        $eschoolId = $userEschoolRole->eschool_id;
+        
+        if ($userEschoolRole->role === 'treasurer') {
+            // For treasurer, get overall kas data
+            $kasRecords = KasRecord::where('eschool_id', $eschoolId)->get();
+            $totalIncome = $kasRecords->where('category', 'income')->sum('amount');
+            $totalExpense = $kasRecords->where('category', 'expense')->sum('amount');
+            $balance = $totalIncome - $totalExpense;
+
+            $memberCount = UserEschoolRole::where('eschool_id', $eschoolId)
+                ->whereIn('role', ['member', 'treasurer'])
+                ->count();
+
+            $monthlyTarget = $memberCount * ($userEschoolRole->eschool->monthly_fee_amount ?? 0);
+            $collectionRate = $monthlyTarget > 0 ? round(($totalIncome / $monthlyTarget) * 100, 2) : 0;
+
+            return [
+                'total_balance' => $balance,
+                'monthly_target' => $monthlyTarget,
+                'collection_rate' => $collectionRate,
+                'pending_approvals' => 0,
+                'payment_status' => 'up_to_date'
+            ];
+        } else {
+            // For member, get personal payment data
+            $personalPayments = KasPayment::where('member_id', $userEschoolRole->id)->get();
+            $personalBalance = $personalPayments->where('is_paid', true)->sum('amount');
+            $monthlyTarget = $userEschoolRole->eschool->monthly_fee_amount ?? 0;
+
+            return [
+                'personal_balance' => $personalBalance,
+                'monthly_target' => $monthlyTarget,
+                'collection_rate' => $monthlyTarget > 0 ? round(($personalBalance / $monthlyTarget) * 100, 2) : 0,
+                'payment_status' => $personalBalance >= $monthlyTarget ? 'up_to_date' : 'overdue'
+            ];
+        }
     }
     
     /**
@@ -181,14 +199,21 @@ class MultiRoleProfileController extends Controller
      */
     private function getAttendanceSummary($userEschoolRole)
     {
-        // For now, we'll return placeholder data
-        // In a real implementation, this would query the database for actual attendance data
+        $attendanceRecords = AttendanceRecord::where('user_eschool_role_id', $userEschoolRole->id)->get();
+        
+        $totalMeetings = $attendanceRecords->count();
+        $attended = $attendanceRecords->where('status', 'present')->count();
+        $absent = $attendanceRecords->where('status', 'absent')->count();
+        $late = $attendanceRecords->where('status', 'late')->count();
+        
+        $attendanceRate = $totalMeetings > 0 ? round(($attended / $totalMeetings) * 100, 2) : 0;
+        
         return [
-            'total_sessions' => 0,
-            'present' => 0,
-            'absent' => 0,
-            'late' => 0,
-            'attendance_rate' => 0
+            'total_meetings' => $totalMeetings,
+            'attended' => $attended,
+            'absent' => $absent,
+            'late' => $late,
+            'attendance_rate' => $attendanceRate
         ];
     }
     
@@ -200,17 +225,53 @@ class MultiRoleProfileController extends Controller
      */
     private function getRecentActivities($user)
     {
-        // For now, we'll return placeholder data
-        // In a real implementation, this would query the database for actual activity data
-        return [
-            [
+        $activities = [];
+
+        // Get recent attendance records
+        $recentAttendance = AttendanceRecord::whereHas('userEschoolRole', function ($query) use ($user) {
+            $query->where('user_id', $user->id);
+        })
+        ->with(['userEschoolRole.eschool', 'userEschoolRole'])
+        ->orderBy('created_at', 'desc')
+        ->take(5)
+        ->get();
+
+        foreach ($recentAttendance as $attendance) {
+            $activities[] = [
                 'type' => 'attendance',
-                'eschool_name' => 'Basketball',
-                'description' => 'Attendance recorded',
-                'date' => now()->toDateString(),
-                'role_context' => 'member'
-            ]
-        ];
+                'eschool_name' => $attendance->userEschoolRole->eschool->name,
+                'description' => 'Attendance recorded: ' . ucfirst($attendance->status),
+                'date' => $attendance->created_at->toISOString(),
+                'role_context' => $attendance->userEschoolRole->role
+            ];
+        }
+
+        // Get recent kas payments
+        $recentKasPayments = KasPayment::whereHas('member', function ($query) use ($user) {
+            $query->where('user_id', $user->id);
+        })
+        ->with(['member.eschool', 'member'])
+        ->orderBy('created_at', 'desc')
+        ->take(5)
+        ->get();
+
+        foreach ($recentKasPayments as $payment) {
+            $activities[] = [
+                'type' => 'kas_transaction',
+                'eschool_name' => $payment->member->eschool->name,
+                'description' => 'Kas payment: ' . ($payment->is_paid ? 'Paid' : 'Pending'),
+                'amount' => $payment->amount,
+                'date' => $payment->created_at->toISOString(),
+                'role_context' => $payment->member->role
+            ];
+        }
+
+        // Sort by date and return latest 10
+        usort($activities, function ($a, $b) {
+            return strtotime($b['date']) - strtotime($a['date']);
+        });
+
+        return array_slice($activities, 0, 10);
     }
     
     /**
@@ -221,13 +282,42 @@ class MultiRoleProfileController extends Controller
      */
     private function calculatePerformanceMetrics($userEschoolRoles)
     {
-        // For now, we'll return placeholder data
-        // In a real implementation, this would calculate actual performance metrics
+        $totalAttendanceRate = 0;
+        $totalKasManaged = 0;
+        $totalPersonalKas = 0;
+        $eschoolCount = $userEschoolRoles->count();
+
+        foreach ($userEschoolRoles as $role) {
+            // Calculate attendance rate
+            $attendanceRecords = AttendanceRecord::where('user_eschool_role_id', $role->id)->get();
+            $totalMeetings = $attendanceRecords->count();
+            $attended = $attendanceRecords->where('status', 'present')->count();
+            $attendanceRate = $totalMeetings > 0 ? ($attended / $totalMeetings) * 100 : 0;
+            $totalAttendanceRate += $attendanceRate;
+
+            // Calculate kas data
+            if ($role->role === 'treasurer') {
+                $kasRecords = KasRecord::where('eschool_id', $role->eschool_id)->get();
+                $totalIncome = $kasRecords->where('category', 'income')->sum('amount');
+                $totalExpense = $kasRecords->where('category', 'expense')->sum('amount');
+                $totalKasManaged += ($totalIncome - $totalExpense);
+            }
+
+            // Calculate personal kas
+            $personalPayments = KasPayment::where('member_id', $role->id)->where('is_paid', true)->sum('amount');
+            $totalPersonalKas += $personalPayments;
+        }
+
+        $avgAttendanceRate = $eschoolCount > 0 ? round($totalAttendanceRate / $eschoolCount, 2) : 0;
+        
+        // Simple activity score calculation
+        $activityScore = min(($avgAttendanceRate * 0.4) + (min($totalPersonalKas / 100000, 30)) + (min($eschoolCount * 10, 30)), 100);
+
         return [
-            'avg_attendance_rate' => 0,
-            'total_kas_managed' => 0,
-            'total_personal_kas' => 0,
-            'overall_activity_score' => 0
+            'avg_attendance_rate' => $avgAttendanceRate,
+            'total_kas_managed' => $totalKasManaged,
+            'total_personal_kas' => $totalPersonalKas,
+            'overall_activity_score' => round($activityScore, 2)
         ];
     }
 }

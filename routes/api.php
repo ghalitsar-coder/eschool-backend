@@ -29,8 +29,16 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/refresh', [AuthController::class, 'refresh']);
     Route::get('/me', [AuthController::class, 'me']);
     
-    // Profile route
+    // Profile routes
     Route::get('/member/profile', [ProfileController::class, 'getProfile']);
+    Route::get('/multi-role/profile', [MultiRoleProfileController::class, 'getMultiRoleProfile']);
+    
+    // Dashboard routes
+    Route::get('/dashboard/multi-role-profile', [App\Http\Controllers\Api\DashboardController::class, 'getMultiRoleProfile']);
+    Route::get('/dashboard/attendance/statistics', [App\Http\Controllers\Api\DashboardController::class, 'getAttendanceStatistics']);
+    Route::get('/dashboard/attendance/analytics', [App\Http\Controllers\Api\DashboardController::class, 'getAttendanceAnalytics']);
+    Route::get('/dashboard/kas/summary', [App\Http\Controllers\Api\DashboardController::class, 'getKasSummary']);
+    Route::get('/dashboard/staff/overview', [App\Http\Controllers\Api\DashboardController::class, 'getStaffOverview']);
     
    Route::middleware(['eschool.role:coordinator,treasurer'])->group(function () {
     // Semua route di dalam group ini pakai middleware "eschool.role"
