@@ -11,6 +11,7 @@ use App\Models\UserEschoolRole;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Tymon\JWTAuth\Facades\JWTAuth;
 use Tymon\JWTAuth\Exceptions\JWTException;
 
@@ -39,11 +40,19 @@ class AuthController extends Controller
             // Load the profile relationship
             $user->load('profile');
 
-            // Generate token for new user
+            // Generate access token with short TTL
             $token = JWTAuth::fromUser($user);
             
-            // Generate refresh token
-            $refreshToken = JWTAuth::fromSubject($user);
+            // Generate refresh token with longer TTL
+            // Create custom claims for refresh token
+            $refreshClaims = [
+                'sub' => $user->id,
+                'iat' => now()->timestamp,
+                'exp' => now()->addMinutes(config('jwt.refresh_ttl'))->timestamp,
+                'type' => 'refresh' // Mark as refresh token
+            ];
+            
+            $refreshToken = JWTAuth::getJWTProvider()->encode($refreshClaims);
             
             // Set refresh token to expire in 2 weeks (default)
             $refreshTokenExpires = config('jwt.refresh_ttl', 20160); // 2 weeks in minutes
@@ -101,8 +110,16 @@ class AuthController extends Controller
             $user = auth()->user();
             $user->load('profile');
             
-            // Generate refresh token
-            $refreshToken = JWTAuth::fromSubject($user);
+            // Generate refresh token with longer TTL
+            // Create custom claims for refresh token
+            $refreshClaims = [
+                'sub' => $user->id,
+                'iat' => now()->timestamp,
+                'exp' => now()->addMinutes(config('jwt.refresh_ttl'))->timestamp,
+                'type' => 'refresh' // Mark as refresh token
+            ];
+            
+            $refreshToken = JWTAuth::getJWTProvider()->encode($refreshClaims);
             
             // Set refresh token to expire in 2 weeks (default)
             $refreshTokenExpires = config('jwt.refresh_ttl', 20160); // 2 weeks in minutes
@@ -177,37 +194,60 @@ class AuthController extends Controller
      *
      * @return \Illuminate\Http\JsonResponse
      */
-    public function refresh()
+    public function refresh(Request $request)
     {
         try {
-            // Get current token
-            $currentToken = JWTAuth::getToken();
+            // Get refresh token from cookie
+            $refreshToken = $request->cookie('refresh_token');
             
-            if (!$currentToken) {
-                return response()->json([
-                    'error' => 'Token not provided',
-                    'message' => 'No authentication token found'
-                ], 401);
+            if (!$refreshToken) {
+                return response()->json(['message' => 'Refresh token not found'], 401);
             }
-            
-            // Refresh token
-            $newToken = JWTAuth::refresh($currentToken);
-            
-            // Get the authenticated user
-            $user = JWTAuth::setToken($newToken)->toUser();
-            $user->load('profile');
+
+            // Decode and validate refresh token
+            try {
+                $payload = JWTAuth::getJWTProvider()->decode($refreshToken);
+                
+                // Check if it's a refresh token
+                if (!isset($payload['type']) || $payload['type'] !== 'refresh') {
+                    return response()->json(['message' => 'Invalid refresh token type'], 401);
+                }
+                
+                // Check if token is expired
+                if ($payload['exp'] < now()->timestamp) {
+                    return response()->json(['message' => 'Refresh token expired'], 401);
+                }
+                
+                // Get user from token
+                $user = User::find($payload['sub']);
+                if (!$user) {
+                    return response()->json(['message' => 'User not found'], 401);
+                }
+                
+            } catch (\Exception $e) {
+                return response()->json(['message' => 'Invalid refresh token'], 401);
+            }
+
+            // Generate new access token
+            $newAccessToken = JWTAuth::fromUser($user);
             
             // Generate new refresh token
-            $newRefreshToken = JWTAuth::fromSubject($user);
+            $refreshClaims = [
+                'sub' => $user->id,
+                'iat' => now()->timestamp,
+                'exp' => now()->addMinutes(config('jwt.refresh_ttl'))->timestamp,
+                'type' => 'refresh'
+            ];
             
-            // Set refresh token to expire in 2 weeks (default)
-            $refreshTokenExpires = config('jwt.refresh_ttl', 20160); // 2 weeks in minutes
+            $newRefreshToken = JWTAuth::getJWTProvider()->encode($refreshClaims);
+
+            // Load profile relationship
+            $user->load('profile');
 
             // Get user's roles
             $userRoles = $this->getUserRoles($user);
 
-            // Return response with new tokens in cookies
-            return response()->json([
+            $response = response()->json([
                 'message' => 'Token refreshed successfully',
                 'user' => [
                     'id' => $user->id,
@@ -218,16 +258,42 @@ class AuthController extends Controller
                 ],
                 'token_info' => [
                     'type' => 'Bearer',
-                    'expires_in' => config('jwt.ttl') * 60 // Convert minutes to seconds
+                    'expires_in' => config('jwt.ttl') * 60
                 ]
-            ], 200)
-            ->cookie('token', $newToken, config('jwt.ttl'), '/', null, false, true)
-            ->cookie('refresh_token', $newRefreshToken, $refreshTokenExpires, '/', null, false, true);
-            
-        } catch (JWTException $e) {
+            ]);
+
+            // Set new access token cookie
+            $response->cookie(
+                'token',
+                $newAccessToken,
+                (int) config('jwt.ttl'),
+                '/',
+                null,
+                false,
+                true,
+                false,
+                'lax'
+            );
+
+            // Set new refresh token cookie
+            $response->cookie(
+                'refresh_token',
+                $newRefreshToken,
+                (int) config('jwt.refresh_ttl'),
+                '/',
+                null,
+                false,
+                true,
+                false,
+                'lax'
+            );
+ 
+            return $response;
+
+        } catch (\Exception $e) {
             return response()->json([
-                'error' => 'Could not refresh token',
-                'message' => 'Token may be expired or invalid'
+                'message' => 'Token refresh failed',
+                'error' => $e->getMessage()
             ], 401);
         }
     }

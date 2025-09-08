@@ -3,66 +3,50 @@
 namespace App\Http\Middleware;
 
 use Closure;
+use Illuminate\Http\Request;
 use Tymon\JWTAuth\Facades\JWTAuth;
 use Tymon\JWTAuth\Exceptions\JWTException;
-use Tymon\JWTAuth\Exceptions\TokenExpiredException;
-use Tymon\JWTAuth\Exceptions\TokenInvalidException;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
 
 class JWTFromCookie
 {
-    /**
-     * Handle an incoming request.
-     *
-     * @param  \Illuminate\Http\Request  $request
-     * @param  \Closure  $next
-     * @return mixed
-     */
     public function handle(Request $request, Closure $next)
     {
-        // Log untuk debugging
-        // Log::info('JWTFromCookie middleware called', [
-        //     'has_cookie' => $request->hasCookie('token'),
-        //     'cookie_names' => array_keys($request->cookies->all())
-        // ]);
+        // Get access token from cookie
+        $token = $request->cookie('token');
         
-        // Cek apakah token ada di cookie
-        if ($request->hasCookie('token')) {
-            $token = $request->cookie('token');
-            
-            // Log::info('Token found in cookie', ['token' => substr($token, 0, 20) . '...']);
+        if ($token) {
+            // Set token for JWTAuth
+            JWTAuth::setToken($token);
             
             try {
-                // Set token ke JWTAuth
-                JWTAuth::setToken($token);
+                // Try to authenticate user
+                $user = JWTAuth::parseToken()->authenticate();
                 
-                // Coba autentikasi user
-                $user = JWTAuth::authenticate();
-                
-                // Log::info('User authenticated', ['user_id' => $user ? $user->id : null]);
-                
-                // Set user ke request jika user ditemukan
                 if ($user) {
-                    $request->setUserResolver(function () use ($user) {
-                        return $user;
-                    });
+                    // Set authenticated user
+                    auth()->setUser($user);
                 }
-            } catch (TokenExpiredException $e) {
-                // Token expired
-                Log::warning('Token expired', ['exception' => $e->getMessage()]);
-                return response()->json(['error' => 'Token has expired'], 401);
-            } catch (TokenInvalidException $e) {
-                // Token invalid
-                Log::warning('Token invalid', ['exception' => $e->getMessage()]);
-                return response()->json(['error' => 'Token is invalid'], 401);
             } catch (JWTException $e) {
-                // Token not found
-                Log::warning('Token not found', ['exception' => $e->getMessage()]);
-                return response()->json(['error' => 'Token not found'], 401);
+                // Access token expired or invalid
+                // Check if we have refresh token
+                $refreshToken = $request->cookie('refresh_token');
+                
+                if ($refreshToken && !$request->is('api/refresh')) {
+                    // Don't auto-refresh on refresh endpoint to avoid loops
+                    try {
+                        JWTAuth::setToken($refreshToken);
+                        $user = JWTAuth::user();
+                        
+                        if ($user) {
+                            // Set user but don't generate new token here
+                            // Frontend should call /refresh endpoint
+                            auth()->setUser($user);
+                        }
+                    } catch (JWTException $refreshException) {
+                        // Both tokens invalid, continue without authentication
+                    }
+                }
             }
-        } else {
-            Log::info('No token cookie found');
         }
         
         return $next($request);

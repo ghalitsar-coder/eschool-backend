@@ -22,11 +22,11 @@ use Illuminate\Support\Facades\Route;
 // Public routes for authentication
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
+Route::post('/refresh', [AuthController::class, 'refresh']); // Refresh token endpoint
 
 // Protected routes
 Route::middleware('auth:api')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
-    Route::post('/refresh', [AuthController::class, 'refresh']);
     Route::get('/me', [AuthController::class, 'me']);
     
     // Profile routes
