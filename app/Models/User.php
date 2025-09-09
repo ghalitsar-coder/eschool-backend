@@ -7,6 +7,7 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Tymon\JWTAuth\Contracts\JWTSubject;
 use App\Models\Profile;
+use App\Models\Student;
 use App\Models\UserEschoolRole;
 
 class User extends Authenticatable implements JWTSubject
@@ -62,6 +63,14 @@ class User extends Authenticatable implements JWTSubject
     public function userEschoolRoles()
     {
         return $this->hasMany(UserEschoolRole::class);
+    }
+
+    /**
+     * Get the student record through the profile.
+     */
+    public function student()
+    {
+        return $this->hasOneThrough(Student::class, Profile::class, 'id', 'profile_id', 'profile_id', 'id');
     }
 
     /**

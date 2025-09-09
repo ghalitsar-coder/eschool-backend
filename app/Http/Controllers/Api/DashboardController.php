@@ -279,11 +279,11 @@ class DashboardController extends Controller
 
             // Daily summary
             $dailySummary = AttendanceRecord::whereIn('user_eschool_role_id', $memberRoles->pluck('id'))
-                ->where('created_at', '>=', $startDate)
+                ->where('date', '>=', $startDate)
                 ->select(
-                    DB::raw('DATE(created_at) as date'),
-                    DB::raw('SUM(CASE WHEN status = "present" THEN 1 ELSE 0 END) as present'),
-                    DB::raw('SUM(CASE WHEN status = "absent" THEN 1 ELSE 0 END) as absent'),
+                    DB::raw('DATE(date) as date'),
+                    DB::raw('SUM(CASE WHEN is_present = 1 THEN 1 ELSE 0 END) as present'),
+                    DB::raw('SUM(CASE WHEN is_present = 0 THEN 1 ELSE 0 END) as absent'),
                     DB::raw('COUNT(*) as total')
                 )
                 ->groupBy('date')
@@ -302,10 +302,10 @@ class DashboardController extends Controller
             // Member attendance rates
             $memberAttendance = $memberRoles->map(function ($memberRole) use ($startDate) {
                 $attendance = AttendanceRecord::where('user_eschool_role_id', $memberRole->id)
-                    ->where('created_at', '>=', $startDate)
+                    ->where('date', '>=', $startDate)
                     ->get();
 
-                $present = $attendance->where('status', 'present')->count();
+                $present = $attendance->where('is_present', true)->count();
                 $total = $attendance->count();
                 $rate = $total > 0 ? round(($present / $total) * 100, 2) : 0;
 
@@ -319,10 +319,10 @@ class DashboardController extends Controller
 
             // Weekday analysis
             $weekdayAnalysis = AttendanceRecord::whereIn('user_eschool_role_id', $memberRoles->pluck('id'))
-                ->where('created_at', '>=', $startDate)
+                ->where('date', '>=', $startDate)
                 ->select(
-                    DB::raw('DAYOFWEEK(created_at) as day_of_week'),
-                    DB::raw('AVG(CASE WHEN status = "present" THEN 100 ELSE 0 END) as average_attendance_rate')
+                    DB::raw('DAYOFWEEK(date) as day_of_week'),
+                    DB::raw('AVG(CASE WHEN is_present = 1 THEN 100 ELSE 0 END) as average_attendance_rate')
                 )
                 ->groupBy('day_of_week')
                 ->orderBy('day_of_week')

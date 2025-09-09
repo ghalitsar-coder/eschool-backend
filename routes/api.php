@@ -5,6 +5,8 @@ use App\Http\Controllers\Api\MultiRoleProfileController;
 use App\Http\Controllers\Api\KasRecordController;
 use App\Http\Controllers\Api\KasPaymentController;
 use App\Http\Controllers\Api\ProfileController;
+use App\Http\Controllers\Api\AttendanceController;
+use App\Http\Controllers\MembersController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -61,4 +63,34 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/kas/payments/member/{userEschoolRoleId}', [KasPaymentController::class, 'getMemberPayments']);
     Route::get('/kas/payments/summary/{eschoolId}', [KasPaymentController::class, 'getEschoolPaymentSummary']);
     Route::put('/kas/payments/{id}', [KasPaymentController::class, 'update']);
+    
+    // Eschool-scoped attendance management routes
+    Route::prefix('eschool/{eschoolId}')->group(function () {
+        
+        // Members list route for attendance system
+        Route::get('/members/list', [MembersController::class, 'list']);
+        
+        // Attendance CRUD routes
+        Route::prefix('attendance')->group(function () {
+            // List attendance records with filtering and pagination
+            Route::get('/records', [AttendanceController::class, 'index']);
+            
+            // Create attendance records (with file upload support) - frontend expects /record
+            Route::post('/record', [AttendanceController::class, 'store']);
+            Route::post('/records', [AttendanceController::class, 'store']);
+            
+            // Individual attendance record management
+            Route::get('/records/{id}', [AttendanceController::class, 'show']);
+            Route::put('/records/{id}', [AttendanceController::class, 'update']);
+            Route::delete('/records/{id}', [AttendanceController::class, 'destroy']);
+            
+            // Statistics and analytics
+            Route::get('/statistics', [AttendanceController::class, 'statistics']);
+            Route::get('/analytics', [AttendanceController::class, 'analytics']);
+            
+            // Export functionality
+            Route::get('/export/csv', [AttendanceController::class, 'exportCsv']);
+            Route::get('/export/pdf', [AttendanceController::class, 'exportPdf']);
+        });
+    });
 });

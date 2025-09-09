@@ -14,7 +14,7 @@ return new class extends Migration
         Schema::create('attendance_record', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('user_eschool_role_id');
-            $table->enum('status', ['present', 'absent', 'late']);
+            $table->boolean('is_present')->default(true);
             $table->text('notes')->nullable();
             $table->timestamps();
 

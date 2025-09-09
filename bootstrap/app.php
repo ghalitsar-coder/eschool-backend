@@ -52,7 +52,7 @@ return Application::configure(basePath: dirname(__DIR__))
             \App\Http\Middleware\EncryptCookies::class, // Add custom EncryptCookies to API
             \App\Http\Middleware\JWTFromCookie::class, // JWT from cookie middleware
             // EnsureFrontendRequestsAreStateful::class, // Removed - using JWT now
-            // ThrottleRequests::class . ':api', // Sementara dikomentari
+            ThrottleRequests::class . ':api', // Enable API rate limiting
             SubstituteBindings::class,
         ]);
     })
