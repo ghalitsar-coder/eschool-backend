@@ -35,12 +35,24 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/member/profile', [ProfileController::class, 'getProfile']);
     Route::get('/multi-role/profile', [MultiRoleProfileController::class, 'getMultiRoleProfile']);
     
+    // Eschool management routes
+    Route::get('/eschools', [App\Http\Controllers\Api\EschoolController::class, 'index']);
+    Route::get('/eschools/{id}', [App\Http\Controllers\Api\EschoolController::class, 'show']);
+    Route::post('/eschools', [App\Http\Controllers\Api\EschoolController::class, 'store']);
+    Route::put('/eschools/{id}', [App\Http\Controllers\Api\EschoolController::class, 'update']);
+    Route::delete('/eschools/{id}', [App\Http\Controllers\Api\EschoolController::class, 'destroy']);
+    
     // Dashboard routes
     Route::get('/dashboard/multi-role-profile', [App\Http\Controllers\Api\DashboardController::class, 'getMultiRoleProfile']);
     Route::get('/dashboard/attendance/statistics', [App\Http\Controllers\Api\DashboardController::class, 'getAttendanceStatistics']);
     Route::get('/dashboard/attendance/analytics', [App\Http\Controllers\Api\DashboardController::class, 'getAttendanceAnalytics']);
     Route::get('/dashboard/kas/summary', [App\Http\Controllers\Api\DashboardController::class, 'getKasSummary']);
-    Route::get('/dashboard/staff/overview', [App\Http\Controllers\Api\DashboardController::class, 'getStaffOverview']);
+    
+    // Analytics routes
+    Route::get('/analytics/eschools', [App\Http\Controllers\Api\DashboardController::class, 'getEschoolAnalytics']);
+    Route::get('/analytics/financial', [App\Http\Controllers\Api\DashboardController::class, 'getFinancialAnalytics']);
+    Route::get('/analytics/attendance', [App\Http\Controllers\Api\DashboardController::class, 'getAttendanceAnalyticsData']);
+
     
    Route::middleware(['eschool.role:coordinator,treasurer'])->group(function () {
     // Semua route di dalam group ini pakai middleware "eschool.role"

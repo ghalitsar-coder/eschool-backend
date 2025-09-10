@@ -8,6 +8,7 @@ use Illuminate\Notifications\Notifiable;
 use Tymon\JWTAuth\Contracts\JWTSubject;
 use App\Models\Profile;
 use App\Models\Student;
+use App\Models\Teacher;
 use App\Models\UserEschoolRole;
 
 class User extends Authenticatable implements JWTSubject
@@ -71,6 +72,14 @@ class User extends Authenticatable implements JWTSubject
     public function student()
     {
         return $this->hasOneThrough(Student::class, Profile::class, 'id', 'profile_id', 'profile_id', 'id');
+    }
+
+    /**
+     * Get the teacher record through the profile.
+     */
+    public function teacher()
+    {
+        return $this->hasOneThrough(Teacher::class, Profile::class, 'id', 'profile_id', 'profile_id', 'id');
     }
 
     /**

@@ -49,6 +49,33 @@ class ProfileController extends Controller
             
             foreach ($userEschoolRoles as $userEschoolRole) {
                 $eschool = $userEschoolRole->eschool;
+                
+                // Handle supervisor roles (eschool_id is null for supervisors)
+                if (!$eschool) {
+                    // For supervisors, get all eschools from the same school
+                    if ($userEschoolRole->role === 'supervisor' && $teacher) {
+                        // Get all eschools from the same school as the supervisor
+                        $schoolEschools = \App\Models\Eschool::where('school_id', $teacher->school_id)->get();
+                        
+                        foreach ($schoolEschools as $schoolEschool) {
+                            $eschools[] = [
+                                'id' => $schoolEschool->id,
+                                'name' => $schoolEschool->name,
+                                'description' => $schoolEschool->description,
+                                'is_active' => $schoolEschool->is_active,
+                                'monthly_fee_amount' => $schoolEschool->monthly_fee_amount,
+                                'schedule_days' => $schoolEschool->schedule_days,
+                                'school_name' => $schoolEschool->school->name ?? null,
+                                'school_id' => $schoolEschool->school_id,
+                                'role' => 'supervisor_view', // Indicate this is a school eschool viewed by supervisor
+                                'joined_at' => $userEschoolRole->created_at->format('Y-m-d'),
+                            ];
+                            $totalEschools++;
+                        }
+                    }
+                    continue;
+                }
+                
                 $school = $eschool->school;
                 
                 $eschools[] = [
@@ -105,7 +132,9 @@ class ProfileController extends Controller
                 'summary' => [
                     'total_eschools' => $totalEschools,
                     'roles' => $userEschoolRoles->pluck('role')->unique()->values()->toArray(),
-                    'schools_involved' => $userEschoolRoles->map(function($role) {
+                    'schools_involved' => $userEschoolRoles->filter(function($role) {
+                        return $role->eschool !== null; // Filter out supervisor roles
+                    })->map(function($role) {
                         return $role->eschool->school->name;
                     })->unique()->values()->toArray(),
                 ],
