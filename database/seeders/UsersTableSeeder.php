@@ -14,15 +14,19 @@ class UsersTableSeeder extends Seeder
      */
     public function run(): void
     {
-        // Profil IDs berdasarkan urutan di ProfilesTableSeeder
-        $profileIds = range(1, 14);
+        // Ambil semua profil yang ada
+        $profiles = DB::table('profiles')->get();
         
         $users = [];
-        foreach ($profileIds as $index => $profileId) {
+        foreach ($profiles as $profile) {
+            // Bersihkan nama untuk membuat email yang valid
+            $cleanName = preg_replace('/[^a-zA-Z0-9\s]/', '', $profile->name);
+            $email = strtolower(str_replace(' ', '.', $cleanName)) . '@example.com';
+            
             $users[] = [
-                'profile_id' => $profileId,
-                'name' => DB::table('profiles')->where('id', $profileId)->value('name'),
-                'email' => strtolower(str_replace(' ', '.', DB::table('profiles')->where('id', $profileId)->value('name'))) . '@example.com',
+                'profile_id' => $profile->id,
+                'name' => $profile->name,
+                'email' => $email,
                 'email_verified_at' => now(),
                 'password' => Hash::make('password123'),
                 'created_at' => now(),
@@ -30,6 +34,9 @@ class UsersTableSeeder extends Seeder
             ];
         }
         
-        DB::table('users')->insert($users);
+        // Hanya masukkan jika ada profil
+        if (!empty($users)) {
+            DB::table('users')->insert($users);
+        }
     }
 }

@@ -126,4 +126,27 @@ class User extends Authenticatable implements JWTSubject
         // Check if user has the specific role
         return in_array($roles, $userRoles);
     }
+
+    /**
+     * Get the school_id for supervisor users.
+     *
+     * @return int|null
+     */
+    public function getSchoolIdAttribute()
+    {
+        // Cek apakah user memiliki role supervisor
+        // Kita asumsikan role supervisor bisa ada di banyak eschool, 
+        // tapi kita ambil school_id dari teacher profile
+        if ($this->hasRole('supervisor')) {
+            // Pastikan relasi teacher sudah di-load untuk efisiensi
+            if (!$this->relationLoaded('teacher')) {
+                $this->load('teacher');
+            }
+            
+            // Kembalikan school_id dari teacher jika ada
+            return $this->teacher ? $this->teacher->school_id : null;
+        }
+        
+        return null; // Bukan supervisor
+    }
 }

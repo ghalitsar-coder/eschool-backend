@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\KasPaymentController;
 use App\Http\Controllers\Api\ProfileController;
 use App\Http\Controllers\Api\AttendanceController;
 use App\Http\Controllers\MembersController;
+use App\Http\Controllers\Api\UserController; // Add this line
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -35,12 +36,22 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/member/profile', [ProfileController::class, 'getProfile']);
     Route::get('/multi-role/profile', [MultiRoleProfileController::class, 'getMultiRoleProfile']);
     
+    // User management routes
+    Route::post('/users', [UserController::class, 'createUser']);
+    
     // Eschool management routes
     Route::get('/eschools', [App\Http\Controllers\Api\EschoolController::class, 'index']);
     Route::get('/eschools/{id}', [App\Http\Controllers\Api\EschoolController::class, 'show']);
     Route::post('/eschools', [App\Http\Controllers\Api\EschoolController::class, 'store']);
     Route::put('/eschools/{id}', [App\Http\Controllers\Api\EschoolController::class, 'update']);
     Route::delete('/eschools/{id}', [App\Http\Controllers\Api\EschoolController::class, 'destroy']);
+    Route::get('/eschools/users/coordinators', [App\Http\Controllers\Api\EschoolController::class, 'getEligibleCoordinators']);
+    
+    // Supervisor routes
+    Route::prefix('supervisor')->group(function () {
+        Route::get('/eligible-treasurers', [App\Http\Controllers\Api\SupervisorController::class, 'getEligibleTreasurers']);
+        Route::get('/eligible-coordinators', [App\Http\Controllers\Api\SupervisorController::class, 'getEligibleCoordinators']);
+    });
     
     // Dashboard routes
     Route::get('/dashboard/multi-role-profile', [App\Http\Controllers\Api\DashboardController::class, 'getMultiRoleProfile']);

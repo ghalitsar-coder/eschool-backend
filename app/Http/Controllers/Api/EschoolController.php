@@ -261,6 +261,8 @@ class EschoolController extends Controller
             $validator = Validator::make($request->all(), [
                 'name' => 'sometimes|string|max:255',
                 'description' => 'nullable|string',
+                'coordinator_id' => 'nullable|exists:users,id',
+                'treasurer_id' => 'nullable|exists:users,id',
                 'schedule_days' => 'nullable|array',
                 'schedule_days.*' => 'string|in:Senin,Selasa,Rabu,Kamis,Jumat,Sabtu,Minggu',
                 'monthly_fee_amount' => 'nullable|numeric|min:0',
@@ -295,6 +297,80 @@ class EschoolController extends Controller
                 return response()->json([
                     'message' => 'Only supervisors can update eschools for their school'
                 ], 403);
+            }
+            
+            // Handle coordinator assignment
+            if ($request->has('coordinator_id')) {
+                $coordinatorId = $request->coordinator_id;
+                
+                // Check if the coordinator is already assigned to another eschool (only if not null)
+                if ($coordinatorId && $coordinatorId !== 'null') {
+                    $existingCoordinatorRole = UserEschoolRole::where('user_id', $coordinatorId)
+                        ->where('role', 'coordinator')
+                        ->where('eschool_id', '!=', $eschool->id)
+                        ->first();
+                    
+                    if ($existingCoordinatorRole) {
+                        return response()->json([
+                            'message' => 'This coordinator is already assigned to another eschool'
+                        ], 422);
+                    }
+                }
+                
+                // Remove existing coordinator role if there is one
+                $existingEschoolCoordinator = UserEschoolRole::where('eschool_id', $eschool->id)
+                    ->where('role', 'coordinator')
+                    ->first();
+                
+                if ($existingEschoolCoordinator) {
+                    $existingEschoolCoordinator->delete();
+                }
+                
+                // Assign new coordinator if provided (and not null/'none')
+                if ($coordinatorId && $coordinatorId !== 'null' && $coordinatorId !== 'none') {
+                    UserEschoolRole::updateOrCreate(
+                        [
+                            'user_id' => $coordinatorId,
+                            'eschool_id' => $eschool->id,
+                            'role' => 'coordinator'
+                        ],
+                        [
+                            'user_id' => $coordinatorId,
+                            'eschool_id' => $eschool->id,
+                            'role' => 'coordinator'
+                        ]
+                    );
+                }
+            }
+            
+            // Handle treasurer assignment
+            if ($request->has('treasurer_id')) {
+                $treasurerId = $request->treasurer_id;
+                
+                // Remove existing treasurer role if there is one
+                $existingEschoolTreasurer = UserEschoolRole::where('eschool_id', $eschool->id)
+                    ->where('role', 'treasurer')
+                    ->first();
+                
+                if ($existingEschoolTreasurer) {
+                    $existingEschoolTreasurer->delete();
+                }
+                
+                // Assign new treasurer if provided (and not null/'none')
+                if ($treasurerId && $treasurerId !== 'null' && $treasurerId !== 'none') {
+                    UserEschoolRole::updateOrCreate(
+                        [
+                            'user_id' => $treasurerId,
+                            'eschool_id' => $eschool->id,
+                            'role' => 'treasurer'
+                        ],
+                        [
+                            'user_id' => $treasurerId,
+                            'eschool_id' => $eschool->id,
+                            'role' => 'treasurer'
+                        ]
+                    );
+                }
             }
             
             // Update the eschool
@@ -392,6 +468,73 @@ class EschoolController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'message' => 'Error deleting eschool',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get eligible coordinators (teachers who are not already coordinators of other eschools).
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getEligibleCoordinators(Request $request)
+    {
+        try {
+            // Get the authenticated user
+            $user = Auth::user();
+            $profile = $user->profile;
+            $teacher = Teacher::where('profile_id', $profile->id)->first();
+            
+            if (!$teacher) {
+                return response()->json([
+                    'message' => 'Only teachers can access coordinator information'
+                ], 403);
+            }
+            
+            $userEschoolRoles = $user->userEschoolRoles;
+            $isSupervisor = $userEschoolRoles->contains('role', 'supervisor');
+            
+            if (!$isSupervisor) {
+                return response()->json([
+                    'message' => 'Only supervisors can access coordinator information'
+                ], 403);
+            }
+            
+            // Get school_id from the teacher record
+            $schoolId = $teacher->school_id;
+            
+            // Get all teachers from the same school who are not already coordinators
+            // First, get all user IDs that are already coordinators
+            $existingCoordinatorIds = UserEschoolRole::where('role', 'coordinator')
+                ->pluck('user_id');
+            
+            // Get all teachers from the same school who are not coordinators
+            $eligibleTeachers = Teacher::where('school_id', $schoolId)
+                ->whereNotIn('profile_id', function($query) {
+                    $query->select('profile_id')
+                        ->from('users')
+                        ->whereIn('id', function($query2) {
+                            $query2->select('user_id')
+                                ->from('user_eschool_roles')
+                                ->where('role', 'coordinator');
+                        });
+                })
+                ->with('profile')
+                ->get()
+                ->map(function ($teacher) {
+                    return [
+                        'id' => $teacher->profile->user->id,
+                        'name' => $teacher->profile->name,
+                        'email' => $teacher->profile->user->email,
+                    ];
+                });
+            
+            return response()->json($eligibleTeachers);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Error retrieving eligible coordinators',
                 'error' => $e->getMessage()
             ], 500);
         }
