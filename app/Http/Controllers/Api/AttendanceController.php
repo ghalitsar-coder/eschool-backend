@@ -34,9 +34,15 @@ class AttendanceController extends Controller
      * @param Request $request
      * @return JsonResponse
      */
-    public function index($eschoolId, Request $request): JsonResponse
+    public function index( Request $request): JsonResponse
     {
         try {
+            $user = Auth::user();
+            $eschoolId = $user->userEschoolRoles()
+            ->where('role', 'coordinator') // Contoh filter role; ganti atau hapus sesuai kasus
+            ->with('eschool') // Eager load jika butuh detail eschool
+            ->first()
+            ->eschool_id ?? null;
             // Check if eschool exists
             $eschool = Eschool::find($eschoolId);
             if (!$eschool) {
@@ -291,10 +297,23 @@ class AttendanceController extends Controller
      * @param int $eschoolId
      * @return JsonResponse
      */
-    public function store(Request $request, $eschoolId): JsonResponse
+    public function store(Request $request): JsonResponse
     {
         try {
             // Validate eschool access
+            $user = Auth::user();
+            $eschoolId = $user->userEschoolRoles()
+            ->where('role', 'coordinator') // Contoh filter role; ganti atau hapus sesuai kasus
+            ->with('eschool') // Eager load jika butuh detail eschool
+            ->first()
+            ->eschool_id ?? null;
+            $eschool = Eschool::find($eschoolId);
+            if (!$eschool) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Eschool not found.'
+                ], 404);
+            }
             if (!$this->validateEschoolAccess(Auth::id(), $eschoolId)) {
                 return response()->json([
                     'success' => false,
@@ -465,17 +484,101 @@ class AttendanceController extends Controller
     }
 
     /**
+     * Parse multipart data manually if Laravel fails
+     */
+    private function parseMultipartData(Request $request): array
+    {
+        $contentType = $request->header('Content-Type');
+        
+        if (!str_contains($contentType, 'multipart/form-data')) {
+            return [];
+        }
+        
+        $data = [];
+        $rawContent = $request->getContent();
+        
+        // Extract boundary from Content-Type header
+        preg_match('/boundary=(.+)$/', $contentType, $matches);
+        if (!isset($matches[1])) {
+            return [];
+        }
+        
+        $boundary = $matches[1];
+        $parts = explode("--{$boundary}", $rawContent);
+        
+        foreach ($parts as $part) {
+            if (empty(trim($part)) || $part === '--') {
+                continue;
+            }
+            
+            // Split header and content
+            $headerEndPos = strpos($part, "\r\n\r\n");
+            if ($headerEndPos === false) {
+                continue;
+            }
+            
+            $header = substr($part, 0, $headerEndPos);
+            $content = substr($part, $headerEndPos + 4);
+            
+            // Parse Content-Disposition header
+            if (preg_match('/name="([^"]+)"/', $header, $nameMatches)) {
+                $fieldName = $nameMatches[1];
+                $data[$fieldName] = trim($content);
+            }
+        }
+        
+        return $data;
+    }
+
+    /**
      * Update the specified attendance record
      *
      * @param Request $request
-     * @param int $eschoolId
      * @param int $id
      * @return JsonResponse
      */
-    public function update(Request $request, $eschoolId, $id): JsonResponse
+    public function update(Request $request, $id): JsonResponse
     {
         try {
             // Validate eschool access
+            $user = Auth::user();
+            $eschoolId = $user->userEschoolRoles()
+            ->where('role', 'coordinator') // Contoh filter role; ganti atau hapus sesuai kasus
+            ->with('eschool') // Eager load jika butuh detail eschool
+            ->first()
+            ->eschool_id ?? null;
+            
+            // Try to manually parse multipart data if Laravel fails
+            $parsedData = $this->parseMultipartData($request);
+            
+            // Handle method spoofing for FormData requests
+            if ($request->has('_method') && $request->input('_method') === 'PUT') {
+                $request->setMethod('PUT');
+            }
+            
+            \Log::info('Update request data:', [
+                'eschoolId' => $eschoolId,
+                'id' => $id,
+                'all_request_data' => $request->all(),
+                'parsed_data' => $parsedData,
+                'request_method' => $request->method(),
+                'content_type' => $request->header('Content-Type'),
+                'content_length' => $request->header('Content-Length'),
+                'raw_input' => substr($request->getContent(), 0, 500), // First 500 chars only
+                'has_is_present' => $request->has('is_present'),
+                'is_present_value' => $request->input('is_present'),
+                'has_proof_document' => $request->hasFile('proof_document'),
+                'is_present_type' => gettype($request->input('is_present')),
+                'files' => $request->allFiles(),
+                'query_params' => $request->query(),
+                'post_data' => $request->post(),
+                'server_data' => [
+                    'CONTENT_TYPE' => $_SERVER['CONTENT_TYPE'] ?? 'not_set',
+                    'REQUEST_METHOD' => $_SERVER['REQUEST_METHOD'] ?? 'not_set',
+                    'CONTENT_LENGTH' => $_SERVER['CONTENT_LENGTH'] ?? 'not_set',
+                ]
+            ]);
+            
             if (!$this->validateEschoolAccess(Auth::id(), $eschoolId)) {
                 return response()->json([
                     'success' => false,
@@ -505,7 +608,10 @@ class AttendanceController extends Controller
             }
 
             // Validation with file upload support
-            $validator = Validator::make($request->all(), [
+            // Combine Laravel parsed data with manually parsed data
+            $validationData = array_merge($request->all(), $parsedData);
+            
+            $validator = Validator::make($validationData, [
                 'date' => 'sometimes|date|before_or_equal:today',
                 'is_present' => 'sometimes|boolean',
                 'notes' => 'nullable|string|max:500',
@@ -513,8 +619,17 @@ class AttendanceController extends Controller
             ]);
 
             // Custom validation for proof document requirement
-            $validator->after(function ($validator) use ($request, $attendanceRecord) {
-                $newIsPresent = $request->input('is_present', $attendanceRecord->is_present);
+            $validator->after(function ($validator) use ($request, $attendanceRecord, $parsedData) {
+                // Handle FormData boolean conversion
+                $isPresentValue = $request->input('is_present');
+                if ($isPresentValue === null && !empty($parsedData['is_present'])) {
+                    $isPresentValue = $parsedData['is_present'];
+                }
+                
+                $newIsPresent = $request->has('is_present') || !empty($parsedData['is_present']) ? 
+                    filter_var($isPresentValue, FILTER_VALIDATE_BOOLEAN) : 
+                    $attendanceRecord->is_present;
+                    
                 $hasProofDocument = $request->hasFile('proof_document');
                 $existingProofDocument = $attendanceRecord->proof_document;
                 
@@ -560,17 +675,38 @@ class AttendanceController extends Controller
                 }
             }
 
+            // Handle is_present conversion from FormData (string to boolean)
+            // Try Laravel first, then fallback to manual parsing
+            $isPresentValue = $request->input('is_present');
+            if ($isPresentValue === null && !empty($parsedData['is_present'])) {
+                $isPresentValue = $parsedData['is_present'];
+            }
+            
+            $newIsPresent = $request->has('is_present') || !empty($parsedData['is_present']) ? 
+                filter_var($isPresentValue, FILTER_VALIDATE_BOOLEAN) : 
+                $attendanceRecord->is_present;
+
+            \Log::info('Processing update:', [
+                'newIsPresent' => $newIsPresent,
+                'oldIsPresent' => $attendanceRecord->is_present,
+                'hasFile' => $request->hasFile('proof_document'),
+                'oldProofDocument' => $oldProofDocument,
+                'newProofDocumentPath' => $newProofDocumentPath
+            ]);
+
             // If is_present is changing from false to true (absent to present), remove proof document requirement
-            $newIsPresent = $request->input('is_present');
-            if ($newIsPresent === true && $oldProofDocument) {
+            if ($newIsPresent === true && !$request->hasFile('proof_document') && $oldProofDocument) {
                 // Delete the proof document file
                 $this->fileUploadService->deleteProofDocument($oldProofDocument);
                 $newProofDocumentPath = null;
             }
 
             // Update attendance record
-            $updateData = $request->only(['date', 'is_present', 'notes']);
+            $updateData = $request->only(['date', 'notes']);
+            $updateData['is_present'] = $newIsPresent;
             $updateData['proof_document'] = $newProofDocumentPath;
+
+            \Log::info('Update data:', $updateData);
 
             $attendanceRecord->update($updateData);
 
@@ -581,6 +717,11 @@ class AttendanceController extends Controller
             ], 200);
 
         } catch (\Exception $e) {
+            \Log::error('Failed to update attendance record:', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to update attendance record.',
@@ -596,16 +737,11 @@ class AttendanceController extends Controller
      * @param int $id
      * @return JsonResponse
      */
-    public function destroy($eschoolId, $id): JsonResponse
+    public function destroy($id): JsonResponse
     {
         try {
             // Validate eschool access
-            if (!$this->validateEschoolAccess(Auth::id(), $eschoolId)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'You do not have permission to delete attendance records for this eschool.'
-                ], 403);
-            }
+             
 
             // Find the attendance record
             $attendanceRecord = AttendanceRecord::find($id);
@@ -653,18 +789,15 @@ class AttendanceController extends Controller
      * @param int $eschoolId
      * @return JsonResponse
      */
-    public function statistics($eschoolId): JsonResponse
+    public function statistics(): JsonResponse
     {
         try {
-            // Validate eschool access
-            if (!$this->validateEschoolAccess(Auth::id(), $eschoolId)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'You do not have permission to view statistics for this eschool.'
-                ], 403);
-            }
-
-            // Check if eschool exists
+            $user = Auth::user();
+            $eschoolId = $user->userEschoolRoles()
+            ->where('role', 'coordinator') // Contoh filter role; ganti atau hapus sesuai kasus
+            ->with('eschool') // Eager load jika butuh detail eschool
+            ->first()
+            ->eschool_id ?? null;
             $eschool = Eschool::find($eschoolId);
             if (!$eschool) {
                 return response()->json([
@@ -672,7 +805,6 @@ class AttendanceController extends Controller
                     'message' => 'Eschool not found.'
                 ], 404);
             }
-
             // Cache key for statistics
             $cacheKey = "attendance_statistics_{$eschoolId}";
             
@@ -703,16 +835,16 @@ class AttendanceController extends Controller
      * @param int $eschoolId
      * @return JsonResponse
      */
-    public function analytics(Request $request, $eschoolId): JsonResponse
+    public function analytics(Request $request): JsonResponse
     {
         try {
             // Validate eschool access
-            if (!$this->validateEschoolAccess(Auth::id(), $eschoolId)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'You do not have permission to view analytics for this eschool.'
-                ], 403);
-            }
+            $user = Auth::user();
+            $eschoolId = $user->userEschoolRoles()
+            ->where('role', 'coordinator') // Contoh filter role; ganti atau hapus sesuai kasus
+            ->with('eschool') // Eager load jika butuh detail eschool
+            ->first()
+            ->eschool_id ?? null;
 
             // Check if eschool exists
             $eschool = Eschool::find($eschoolId);
@@ -1058,10 +1190,16 @@ class AttendanceController extends Controller
      * @param int $eschoolId
      * @return \Symfony\Component\HttpFoundation\StreamedResponse
      */
-    public function exportCsv(Request $request, $eschoolId)
+    public function exportCsv(Request $request)
     {
         try {
             // Validate eschool access
+            $user = Auth::user();
+            $eschoolId = $user->userEschoolRoles()
+            ->where('role', 'coordinator') // Contoh filter role; ganti atau hapus sesuai kasus
+            ->with('eschool') // Eager load jika butuh detail eschool
+            ->first()
+            ->eschool_id ?? null;
             if (!$this->validateEschoolAccess(Auth::id(), $eschoolId)) {
                 return response()->json([
                     'success' => false,

@@ -20,24 +20,23 @@ class CheckEschoolRole
             return response()->json(['message' => 'Unauthenticated'], 401);
         }
 
-        // Get eschool ID from route parameter
-        $eschoolId = $request->route('eschoolId');
-        
-        if (!$eschoolId) {
-            return response()->json(['message' => 'Eschool ID not provided'], 400);
-        }
-
-        // Check if user has any of the specified roles for the given eschool
-        $userEschoolRoles = UserEschoolRole::where('user_id', $request->user()->id)
-            ->where('eschool_id', $eschoolId)
+        // Get the user's eschool roles
+        $userEschoolRoles = $request->user()->userEschoolRoles()
             ->whereIn('role', $roles)
-            ->exists();
+            ->get();
 
-        if (!$userEschoolRoles) {
+        if ($userEschoolRoles->isEmpty()) {
             return response()->json([
                 'message' => 'Unauthorized. Required roles for this eschool: ' . implode(', ', $roles)
             ], 403);
         }
+
+        // For now, we'll use the first matching role's eschool_id
+        // In a real implementation, you might want to handle multiple eschools differently
+        $eschoolId = $userEschoolRoles->first()->eschool_id;
+
+        // Add eschool_id to the request for use in controllers
+        $request->attributes->set('eschool_id', $eschoolId);
 
         return $next($request);
     }

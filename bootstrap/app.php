@@ -51,6 +51,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->group('api', [
             \App\Http\Middleware\EncryptCookies::class, // Add custom EncryptCookies to API
             \App\Http\Middleware\JWTFromCookie::class, // JWT from cookie middleware
+            \App\Http\Middleware\DebugMultipartData::class, // Debug multipart data
             // EnsureFrontendRequestsAreStateful::class, // Removed - using JWT now
             ThrottleRequests::class . ':api', // Enable API rate limiting
             SubstituteBindings::class,

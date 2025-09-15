@@ -4,9 +4,11 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\MultiRoleProfileController;
 use App\Http\Controllers\Api\KasRecordController;
 use App\Http\Controllers\Api\KasPaymentController;
+use App\Http\Controllers\Api\PaymentStatisticsController;
 use App\Http\Controllers\Api\ProfileController;
 use App\Http\Controllers\Api\AttendanceController;
 use App\Http\Controllers\MembersController;
+use App\Http\Controllers\MemberController;
 use App\Http\Controllers\Api\UserController; // Add this line
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -65,12 +67,16 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/analytics/attendance', [App\Http\Controllers\Api\DashboardController::class, 'getAttendanceAnalyticsData']);
 
     
-   Route::middleware(['eschool.role:coordinator,treasurer'])->group(function () {
-    // Semua route di dalam group ini pakai middleware "eschool.role"
-    
-    Route::get('/members/{eschoolId}', [App\Http\Controllers\MemberController::class, 'getMembersByEschool']);
-    // Route::post('/members/{eschoolId}', [App\Http\Controllers\MemberController::class, 'addMember']);
-    // Route::delete('/members/{eschoolId}/{userId}', [App\Http\Controllers\MemberController::class, 'removeMember']);
+    // Member management routes (new)
+    Route::middleware(['eschool.role:coordinator,treasurer'])->group(function () {
+        Route::prefix('members')->group(function () {
+            Route::get('/eschool', [App\Http\Controllers\MembersController::class, 'getMembers']);
+            Route::get('/manage', [App\Http\Controllers\Api\MemberManagementController::class, 'getMembers']);
+            Route::get('/available-for-eschool', [App\Http\Controllers\Api\MemberManagementController::class, 'getAvailableUsers']);
+            Route::post('/assign-role', [App\Http\Controllers\Api\MemberManagementController::class, 'assignRole']);
+            Route::put('/{userId}/update-role', [App\Http\Controllers\Api\MemberManagementController::class, 'updateRole']);
+            Route::delete('/{userId}/remove-role', [App\Http\Controllers\Api\MemberManagementController::class, 'removeRole']);
+        });
     });
     // Kas management routes
     // Kas Record routes
@@ -87,8 +93,13 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/kas/payments/summary/{eschoolId}', [KasPaymentController::class, 'getEschoolPaymentSummary']);
     Route::put('/kas/payments/{id}', [KasPaymentController::class, 'update']);
     
+    // Payment Statistics routes
+    Route::get('/eschools/{eschoolId}/payment-statistics', [PaymentStatisticsController::class, 'getEschoolPaymentStatistics']);
+    Route::get('/members/{memberId}/payment-details', [PaymentStatisticsController::class, 'getMemberPaymentDetails']);
+    Route::get('/members/{memberId}/payments/{month}/{year}', [PaymentStatisticsController::class, 'getMemberPeriodPayments']);
+    
     // Eschool-scoped attendance management routes
-    Route::prefix('eschool/{eschoolId}')->group(function () {
+    Route::prefix('eschool')->group(function () {
         
         // Members list route for attendance system
         Route::get('/members/list', [MembersController::class, 'list']);
@@ -105,6 +116,7 @@ Route::middleware('auth:api')->group(function () {
             // Individual attendance record management
             Route::get('/records/{id}', [AttendanceController::class, 'show']);
             Route::put('/records/{id}', [AttendanceController::class, 'update']);
+            Route::post('/records/{id}', [AttendanceController::class, 'update']); // For method spoofing with FormData
             Route::delete('/records/{id}', [AttendanceController::class, 'destroy']);
             
             // Statistics and analytics

@@ -99,25 +99,42 @@ class KasRecordController extends Controller
             // Validate for duplicate payments before processing
             $duplicatePayments = [];
             foreach ($validatedData['payments'] as $payment) {
-                // Check if member already paid for the same month and year
-                $existingPayment = KasPayment::where('member_id', $payment['member_id'])
-                    ->where('month', $payment['month'])
-                    ->where('year', $payment['year'])
+                // Verify member belongs to the same eschool
+                $memberRole = UserEschoolRole::where('user_id', $payment['member_id'])
+                    ->where('eschool_id', $validatedData['eschool_id'])
                     ->first();
+                
+                if ($memberRole) {
+                    // Check if member already paid for the same month and year
+                    $existingPayments = KasPayment::where('member_id', $memberRole->id)
+                        ->where('month', $payment['month'])
+                        ->where('year', $payment['year'])
+                        ->get();
 
-                if ($existingPayment) {
-                    // Get member name for error message
-                    $memberRole = UserEschoolRole::with('user.profile')->where('user_id', $payment['member_id'])->first();
-                    $memberName = $memberRole && $memberRole->user && $memberRole->user->profile 
-                        ? $memberRole->user->profile->name 
-                        : 'Unknown Member';
-                    
-                    $duplicatePayments[] = [
-                        'member_id' => $payment['member_id'],
-                        'member_name' => $memberName,
-                        'month' => $payment['month'],
-                        'year' => $payment['year']
-                    ];
+                    if ($existingPayments->isNotEmpty()) {
+                        // Calculate total amount already paid for this month/year
+                        $totalPaid = $existingPayments->sum('amount');
+                        
+                        // Get eschool to check monthly fee amount
+                        $eschool = \App\Models\Eschool::find($validatedData['eschool_id']);
+                        $monthlyFee = $eschool ? $eschool->monthly_fee_amount : 0;
+                        
+                        // If total paid is already equal to or more than monthly fee, it's a duplicate
+                        // Only prevent payment if the member has fully paid for the month
+                        if ($totalPaid >= $monthlyFee && $monthlyFee > 0) {
+                            // Get member name for error message
+                            $memberName = $memberRole && $memberRole->user && $memberRole->user->profile 
+                                ? $memberRole->user->profile->name 
+                                : 'Unknown Member';
+                            
+                            $duplicatePayments[] = [
+                                'member_id' => $payment['member_id'],
+                                'member_name' => $memberName,
+                                'month' => $payment['month'],
+                                'year' => $payment['year']
+                            ];
+                        }
+                    }
                 }
             }
 
@@ -161,8 +178,11 @@ class KasRecordController extends Controller
                 $kasPayments = [];
                 foreach ($validatedData['payments'] as $payment) {
                     // Verify member belongs to the same eschool
-                    $member = UserEschoolRole::where('user_id', $payment['member_id'])->first();
-                    if (!$member || $member->eschool_id != $validatedData['eschool_id'] || !in_array($member->role, ['member', 'treasurer'])) {
+                    $member = UserEschoolRole::where('user_id', $payment['member_id'])
+                        ->where('eschool_id', $validatedData['eschool_id'])
+                        ->first();
+                    \Log::info('INI NYOBA GITA',['member' => $member]);
+                    if (!$member || !in_array($member->role, ['member', 'treasurer'])) {
                         DB::rollBack();
                         return response()->json([
                             'success' => false,
@@ -172,7 +192,7 @@ class KasRecordController extends Controller
 
                     $kasPayment = KasPayment::create([
                         'kas_record_id' => $kasRecord->id,
-                        'member_id' => $payment['member_id'],
+                        'member_id' => $member->id, // Use the UserEschoolRole id, not the user_id
                         'amount' => abs($payment['amount']), // Ensure amount is positive
                         'month' => $payment['month'],
                         'year' => $payment['year'],
