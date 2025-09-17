@@ -237,6 +237,9 @@ class MemberManagementController extends Controller
                 'role' => $request->role,
             ]);
             
+            // Clear attendance statistics cache for this eschool
+            \Illuminate\Support\Facades\Cache::forget("attendance_statistics_{$eschoolId}");
+            
             // Load related data
             $newRole->load(['user.profile', 'user.student', 'eschool']);
             
@@ -318,6 +321,9 @@ class MemberManagementController extends Controller
                 'role' => $request->role,
             ]);
             
+            // Clear attendance statistics cache for this eschool
+            \Illuminate\Support\Facades\Cache::forget("attendance_statistics_{$eschoolId}");
+            
             // Load related data
             $existingRole->load(['user.profile', 'user.student', 'eschool']);
             
@@ -390,6 +396,9 @@ class MemberManagementController extends Controller
             
             // Delete the role
             $existingRole->delete();
+            
+            // Clear attendance statistics cache for this eschool
+            \Illuminate\Support\Facades\Cache::forget("attendance_statistics_{$eschoolId}");
             
             return response()->json([
                 'success' => true,

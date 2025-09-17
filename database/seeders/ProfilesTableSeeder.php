@@ -34,6 +34,24 @@ class ProfilesTableSeeder extends Seeder
                 'created_at' => now(),
                 'updated_at' => now(),
             ],
+            [
+                'name' => 'Pak Dudung',
+                'date_of_birth' => '1975-09-22',
+                'gender' => 'M',
+                'address' => 'Jl. Mawar No. 5, Jakarta',
+                'status' => 'active',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'name' => 'Pak Jajang',
+                'date_of_birth' => '1975-10-22',
+                'gender' => 'M',
+                'address' => 'Jl. Anggrek No. 5, Jakarta',
+                'status' => 'active',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
             
             // Staff Sekolah B
             [

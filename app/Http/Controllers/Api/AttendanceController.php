@@ -460,6 +460,9 @@ class AttendanceController extends Controller
             $transformedRecords = collect($createdRecords)->map(function ($record) {
                 return $this->transformAttendanceRecord($record);
             });
+            
+            // Clear attendance statistics cache for this eschool
+            \Illuminate\Support\Facades\Cache::forget("attendance_statistics_{$eschoolId}");
 
             return response()->json([
                 'success' => true,
@@ -709,6 +712,10 @@ class AttendanceController extends Controller
             \Log::info('Update data:', $updateData);
 
             $attendanceRecord->update($updateData);
+            
+            // Clear attendance statistics cache for this eschool
+            $eschoolId = $attendanceRecord->userEschoolRole->eschool_id;
+            \Illuminate\Support\Facades\Cache::forget("attendance_statistics_{$eschoolId}");
 
             return response()->json([
                 'success' => true,
@@ -767,7 +774,11 @@ class AttendanceController extends Controller
             }
 
             // Delete the record
+            $eschoolId = $attendanceRecord->userEschoolRole->eschool_id;
             $attendanceRecord->delete();
+            
+            // Clear attendance statistics cache for this eschool
+            \Illuminate\Support\Facades\Cache::forget("attendance_statistics_{$eschoolId}");
 
             return response()->json([
                 'success' => true,

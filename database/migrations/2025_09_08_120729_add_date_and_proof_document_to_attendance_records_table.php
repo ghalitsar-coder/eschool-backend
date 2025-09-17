@@ -1,5 +1,4 @@
 <?php
-
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -14,19 +13,29 @@ return new class extends Migration
     {
         Schema::table('attendance_record', function (Blueprint $table) {
             // Add date column (required for attendance tracking)
-            $table->date('date')->after('user_eschool_role_id');
-            
+            if (!Schema::hasColumn('attendance_record', 'date')) {
+                $table->date('date')->after('user_eschool_role_id');
+            }
+           
             // Add proof_document column (nullable, for storing file paths)
-            $table->string('proof_document', 255)->nullable()->after('notes');
-            
-            // Add indexes for performance optimization
-            $table->index('date', 'idx_attendance_date');
+            if (!Schema::hasColumn('attendance_record', 'proof_document')) {
+                $table->string('proof_document', 255)->nullable()->after('notes');
+            }
         });
-        
-        // Add unique constraint separately to avoid foreign key issues
-        Schema::table('attendance_record', function (Blueprint $table) {
-            $table->unique(['user_eschool_role_id', 'date'], 'unique_user_eschool_role_date');
-        });
+
+        // Add index
+        try {
+            DB::statement('ALTER TABLE attendance_record ADD INDEX idx_attendance_date (date)');
+        } catch (\Exception $e) {
+            // Index sudah ada, skip
+        }
+
+        // Add unique constraint
+        try {
+            DB::statement('ALTER TABLE attendance_record ADD CONSTRAINT unique_user_eschool_role_date UNIQUE (user_eschool_role_id, date)');
+        } catch (\Exception $e) {
+            // Constraint sudah ada, skip
+        }
     }
 
     /**
@@ -34,37 +43,33 @@ return new class extends Migration
      */
     public function down(): void
     {
-        // Periksa apakah index ada sebelum mencoba menghapusnya
-        $indexExists = DB::select(
-            DB::raw(
-                'SHOW INDEX FROM attendance_record WHERE Key_name = "unique_user_eschool_role_date"'
-            )
-        );
+        // Disable foreign key checks sementara
+        DB::statement('SET FOREIGN_KEY_CHECKS = 0');
 
-        if (!empty($indexExists)) {
-            Schema::table('attendance_record', function (Blueprint $table) {
-                // Drop unique constraint first
-                $table->dropUnique('unique_user_eschool_role_date');
-            });
+        // Drop constraints dan indexes
+        try {
+            DB::statement('ALTER TABLE attendance_record DROP INDEX unique_user_eschool_role_date');
+        } catch (\Exception $e) {
+            // Sudah tidak ada, skip
         }
-        
-        // Periksa apakah index idx_attendance_date ada sebelum mencoba menghapusnya
-        $indexDateExists = DB::select(
-            DB::raw(
-                'SHOW INDEX FROM attendance_record WHERE Key_name = "idx_attendance_date"'
-            )
-        );
 
-        if (!empty($indexDateExists)) {
-            Schema::table('attendance_record', function (Blueprint $table) {
-                // Drop index on date column
-                $table->dropIndex('idx_attendance_date');
-            });
+        try {
+            DB::statement('ALTER TABLE attendance_record DROP INDEX idx_attendance_date');
+        } catch (\Exception $e) {
+            // Sudah tidak ada, skip
         }
-        
+
+        // Enable foreign key checks kembali
+        DB::statement('SET FOREIGN_KEY_CHECKS = 1');
+
+        // Drop columns
         Schema::table('attendance_record', function (Blueprint $table) {
-            // Drop columns (this will automatically drop associated indexes)
-            $table->dropColumn(['date', 'proof_document']);
+            if (Schema::hasColumn('attendance_record', 'date')) {
+                $table->dropColumn('date');
+            }
+            if (Schema::hasColumn('attendance_record', 'proof_document')) {
+                $table->dropColumn('proof_document');
+            }
         });
     }
 };

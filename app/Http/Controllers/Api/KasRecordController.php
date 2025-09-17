@@ -154,6 +154,107 @@ class KasRecordController extends Controller
                 ], 422);
             }
 
+            // Validate if any member payment exceeds the remaining amount they owe
+            $excessivePayments = [];
+            $eschool = \App\Models\Eschool::find($validatedData['eschool_id']);
+            $monthlyFee = $eschool ? $eschool->monthly_fee_amount : 0;
+            
+            if ($monthlyFee > 0) {
+                foreach ($validatedData['payments'] as $payment) {
+                    // Check if member already paid for the same month and year
+                    $memberRole = UserEschoolRole::where('user_id', $payment['member_id'])
+                        ->where('eschool_id', $validatedData['eschool_id'])
+                        ->first();
+                    
+                    if ($memberRole) {
+                        // Get existing payments for this member for the same month/year
+                        $existingPayments = KasPayment::where('member_id', $memberRole->id)
+                            ->where('month', $payment['month'])
+                            ->where('year', $payment['year'])
+                            ->get();
+
+                        if ($existingPayments->isNotEmpty()) {
+                            // Calculate total amount already paid for this month/year
+                            $totalPaid = $existingPayments->sum('amount');
+                            
+                            // Calculate remaining amount they owe
+                            $remainingAmount = $monthlyFee - $totalPaid;
+                            
+                            // If they're trying to pay more than what they owe, it's an error
+                            if ($payment['amount'] > $remainingAmount && $remainingAmount > 0) {
+                                // Get member name for error message
+                                $memberName = $memberRole && $memberRole->user && $memberRole->user->profile 
+                                    ? $memberRole->user->profile->name 
+                                    : 'Unknown Member';
+                                    
+                                $excessivePayments[] = [
+                                    'member_id' => $payment['member_id'],
+                                    'member_name' => $memberName,
+                                    'amount_paid' => $payment['amount'],
+                                    'remaining_amount' => $remainingAmount,
+                                    'total_paid' => $totalPaid,
+                                    'monthly_fee' => $monthlyFee
+                                ];
+                            }
+                            
+                            // If they've already fully paid, any additional payment is an error
+                            if ($remainingAmount <= 0) {
+                                // Get member name for error message
+                                $memberName = $memberRole && $memberRole->user && $memberRole->user->profile 
+                                    ? $memberRole->user->profile->name 
+                                    : 'Unknown Member';
+                                    
+                                $excessivePayments[] = [
+                                    'member_id' => $payment['member_id'],
+                                    'member_name' => $memberName,
+                                    'amount_paid' => $payment['amount'],
+                                    'remaining_amount' => 0,
+                                    'total_paid' => $totalPaid,
+                                    'monthly_fee' => $monthlyFee
+                                ];
+                            }
+                        } else {
+                            // No existing payments, check against full monthly fee
+                            if ($payment['amount'] > $monthlyFee) {
+                                // Get member name for error message
+                                $memberName = $memberRole && $memberRole->user && $memberRole->user->profile 
+                                    ? $memberRole->user->profile->name 
+                                    : 'Unknown Member';
+                                    
+                                $excessivePayments[] = [
+                                    'member_id' => $payment['member_id'],
+                                    'member_name' => $memberName,
+                                    'amount_paid' => $payment['amount'],
+                                    'remaining_amount' => $monthlyFee,
+                                    'total_paid' => 0,
+                                    'monthly_fee' => $monthlyFee
+                                ];
+                            }
+                        }
+                    }
+                }
+            }
+
+            // If there are excessive payments, return error
+            if (!empty($excessivePayments)) {
+                $errorMessages = [];
+                foreach ($excessivePayments as $excess) {
+                    if ($excess['remaining_amount'] <= 0) {
+                        $errorMessages[] = "Pembayaran dari {$excess['member_name']} sebesar Rp " . number_format($excess['amount_paid'], 0, ',', '.') . " tidak dapat diproses karena kas untuk periode {$payment['month']}/{$payment['year']} sudah lunas.";
+                    } else {
+                        $errorMessages[] = "Pembayaran dari {$excess['member_name']} sebesar Rp " . number_format($excess['amount_paid'], 0, ',', '.') . " melebihi sisa kas yang belum dibayar sebesar Rp " . number_format($excess['remaining_amount'], 0, ',', '.') . ". Mohon periksa kembali jumlah pembayaran.";
+                    }
+                }
+
+                return response()->json([
+                    'success' => false,
+                    'message' => implode(' ', $errorMessages),
+                    'errors' => [
+                        'excessive_payments' => $excessivePayments
+                    ]
+                ], 422);
+            }
+
             // Calculate total amount from payments
                 $totalAmount = collect($validatedData['payments'])->sum('amount');
                 

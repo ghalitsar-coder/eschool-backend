@@ -248,28 +248,28 @@ class DashboardController extends Controller
 
             // Today's statistics
             $todayAttendance = AttendanceRecord::whereIn('user_eschool_role_id', $memberRoles->pluck('id'))
-                ->whereDate('created_at', $today)
+                ->whereDate('date', $today)
                 ->get();
             
-            $todayPresent = $todayAttendance->where('status', 'present')->count();
+            $todayPresent = $todayAttendance->where('is_present', true)->count();
             $todayTotal = $todayAttendance->count();
             $todayPercentage = $todayTotal > 0 ? round(($todayPresent / $todayTotal) * 100, 2) : 0;
 
             // This week's statistics
             $weekAttendance = AttendanceRecord::whereIn('user_eschool_role_id', $memberRoles->pluck('id'))
-                ->where('created_at', '>=', $weekStart)
+                ->where('date', '>=', $weekStart)
                 ->get();
             
-            $weekPresent = $weekAttendance->where('status', 'present')->count();
+            $weekPresent = $weekAttendance->where('is_present', true)->count();
             $weekTotal = $weekAttendance->count();
             $weekPercentage = $weekTotal > 0 ? round(($weekPresent / $weekTotal) * 100, 2) : 0;
 
             // This month's statistics
             $monthAttendance = AttendanceRecord::whereIn('user_eschool_role_id', $memberRoles->pluck('id'))
-                ->where('created_at', '>=', $monthStart)
+                ->where('date', '>=', $monthStart)
                 ->get();
             
-            $monthPresent = $monthAttendance->where('status', 'present')->count();
+            $monthPresent = $monthAttendance->where('is_present', true)->count();
             $monthTotal = $monthAttendance->count();
             $monthPercentage = $monthTotal > 0 ? round(($monthPresent / $monthTotal) * 100, 2) : 0;
 
@@ -312,16 +312,51 @@ class DashboardController extends Controller
     {
         try {
             $user = Auth::user();
-            $coordinatorRole = $user->userEschoolRoles()->where('role', 'coordinator')->first();
             
-            if (!$coordinatorRole) {
+            // Check if user is coordinator or supervisor
+            $coordinatorRole = $user->userEschoolRoles()->where('role', 'coordinator')->first();
+            $isSupervisor = $user->userEschoolRoles()->where('role', 'supervisor')->exists();
+            
+            // For supervisors, get all eschools in their school
+            if ($isSupervisor) {
+                $teacher = $user->teacher;
+                if (!$teacher) {
+                    return response()->json([
+                        'message' => 'User is not a teacher',
+                        'error' => 'Access denied'
+                    ], 403);
+                }
+                
+                $eschools = Eschool::where('school_id', $teacher->school_id)->get();
+                if ($eschools->isEmpty()) {
+                    return response()->json([
+                        'message' => 'No eschools found for this supervisor',
+                        'data' => [
+                            'overall' => [
+                                'total_members' => 0,
+                                'total_present' => 0,
+                                'total_possible' => 0,
+                                'attendance_rate' => 0
+                            ],
+                            'daily_summary' => [],
+                            'member_attendance' => [],
+                            'weekday_analysis' => []
+                        ]
+                    ], 200);
+                }
+            }
+            // For coordinators, get their specific eschool
+            else if ($coordinatorRole) {
+                $eschools = Eschool::where('id', $coordinatorRole->eschool_id)->get();
+            }
+            // Neither coordinator nor supervisor
+            else {
                 return response()->json([
-                    'message' => 'User is not a coordinator',
+                    'message' => 'User is not authorized to access attendance analytics',
                     'error' => 'Access denied'
                 ], 403);
             }
 
-            $eschoolId = $coordinatorRole->eschool_id;
             $period = $request->get('period', 'week');
 
             // Get date range based on period
@@ -336,92 +371,205 @@ class DashboardController extends Controller
                     $startDate = Carbon::now()->startOfWeek();
             }
 
-            // Get all members of this eschool
-            $memberRoles = UserEschoolRole::where('eschool_id', $eschoolId)
-                ->whereIn('role', ['member', 'treasurer'])
-                ->with('user.profile')
-                ->get();
+            // For supervisors, we need to collect data from all eschools
+            $allDailySummary = [];
+            $allMemberAttendance = [];
+            $allWeekdayAnalysis = [];
+            $totalMembers = 0;
+            $totalPresent = 0;
+            $totalPossible = 0;
 
-            // Overall statistics
-            $allAttendance = AttendanceRecord::whereIn('user_eschool_role_id', $memberRoles->pluck('id'))
-                ->where('created_at', '>=', $startDate)
-                ->get();
-
-            $totalPresent = $allAttendance->where('status', 'present')->count();
-            $totalPossible = $allAttendance->count();
-            $attendanceRate = $totalPossible > 0 ? round(($totalPresent / $totalPossible) * 100, 2) : 0;
-
-            // Daily summary
-            $dailySummary = AttendanceRecord::whereIn('user_eschool_role_id', $memberRoles->pluck('id'))
-                ->where('date', '>=', $startDate)
-                ->select(
-                    DB::raw('DATE(date) as date'),
-                    DB::raw('SUM(CASE WHEN is_present = 1 THEN 1 ELSE 0 END) as present'),
-                    DB::raw('SUM(CASE WHEN is_present = 0 THEN 1 ELSE 0 END) as absent'),
-                    DB::raw('COUNT(*) as total')
-                )
-                ->groupBy('date')
-                ->orderBy('date')
-                ->get()
-                ->map(function ($item) {
-                    return [
-                        'date' => $item->date,
-                        'formatted_date' => Carbon::parse($item->date)->format('M d'),
-                        'present' => $item->present,
-                        'absent' => $item->absent,
-                        'total' => $item->total
-                    ];
-                });
-
-            // Member attendance rates
-            $memberAttendance = $memberRoles->map(function ($memberRole) use ($startDate) {
-                $attendance = AttendanceRecord::where('user_eschool_role_id', $memberRole->id)
-                    ->where('date', '>=', $startDate)
+            foreach ($eschools as $eschool) {
+                // Get all members of this eschool
+                $memberRoles = UserEschoolRole::where('eschool_id', $eschool->id)
+                    ->whereIn('role', ['member', 'treasurer'])
+                    ->with('user.profile')
                     ->get();
 
-                $present = $attendance->where('is_present', true)->count();
-                $total = $attendance->count();
-                $rate = $total > 0 ? round(($present / $total) * 100, 2) : 0;
+                $totalMembers += $memberRoles->count();
 
-                return [
-                    'name' => $memberRole->user->profile->name,
-                    'attendance_rate' => $rate,
-                    'present' => $present,
-                    'total' => $total
-                ];
-            })->sortByDesc('attendance_rate')->values();
+                // Overall statistics for this eschool
+                $allAttendance = AttendanceRecord::whereIn('user_eschool_role_id', $memberRoles->pluck('id'))
+                    ->where('created_at', '>=', $startDate)
+                    ->get();
 
-            // Weekday analysis
-            $weekdayAnalysis = AttendanceRecord::whereIn('user_eschool_role_id', $memberRoles->pluck('id'))
-                ->where('date', '>=', $startDate)
-                ->select(
-                    DB::raw('DAYOFWEEK(date) as day_of_week'),
-                    DB::raw('AVG(CASE WHEN is_present = 1 THEN 100 ELSE 0 END) as average_attendance_rate')
-                )
-                ->groupBy('day_of_week')
-                ->orderBy('day_of_week')
-                ->get()
-                ->map(function ($item) {
-                    $days = ['', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-                    $shortDays = ['', 'Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-                    
+                $eschoolPresent = $allAttendance->where('is_present', true)->count();
+                $eschoolPossible = $allAttendance->count();
+                
+                $totalPresent += $eschoolPresent;
+                $totalPossible += $eschoolPossible;
+
+                // Daily summary for this eschool
+                $dailySummary = AttendanceRecord::whereIn('user_eschool_role_id', $memberRoles->pluck('id'))
+                    ->where('date', '>=', $startDate)
+                    ->select(
+                        DB::raw('DATE(date) as date'),
+                        DB::raw('SUM(CASE WHEN is_present = 1 THEN 1 ELSE 0 END) as present'),
+                        DB::raw('SUM(CASE WHEN is_present = 0 THEN 1 ELSE 0 END) as absent'),
+                        DB::raw('COUNT(*) as total')
+                    )
+                    ->groupBy('date')
+                    ->orderBy('date')
+                    ->get()
+                    ->map(function ($item) {
+                        return [
+                            'date' => $item->date,
+                            'formatted_date' => Carbon::parse($item->date)->format('M d'),
+                            'present' => $item->present,
+                            'absent' => $item->absent,
+                            'total' => $item->total
+                        ];
+                    });
+
+                // Add to all daily summaries (we'll aggregate later)
+                foreach ($dailySummary as $day) {
+                    $dateKey = $day['date'] instanceof \DateTimeInterface ? $day['date']->format('Y-m-d') : (string) $day['date'];
+                    if (!isset($allDailySummary[$dateKey])) {
+                        $allDailySummary[$dateKey] = [
+                            'date' => $day['date'],
+                            'formatted_date' => $day['formatted_date'],
+                            'present' => 0,
+                            'absent' => 0,
+                            'total' => 0
+                        ];
+                    }
+                    $allDailySummary[$dateKey]['present'] += $day['present'];
+                    $allDailySummary[$dateKey]['absent'] += $day['absent'];
+                    $allDailySummary[$dateKey]['total'] += $day['total'];
+                }
+
+                // Member attendance rates for this eschool
+                $memberAttendance = $memberRoles->map(function ($memberRole) use ($startDate) {
+                    $attendance = AttendanceRecord::where('user_eschool_role_id', $memberRole->id)
+                        ->where('date', '>=', $startDate)
+                        ->get();
+
+                    $present = $attendance->where('is_present', true)->count();
+                    $total = $attendance->count();
+                    $rate = $total > 0 ? round(($present / $total) * 100, 2) : 0;
+
                     return [
-                        'day_of_week' => $days[$item->day_of_week],
-                        'short_day' => $shortDays[$item->day_of_week],
-                        'average_attendance_rate' => round($item->average_attendance_rate, 2)
+                        'name' => $memberRole->user->profile->name,
+                        'attendance_rate' => $rate,
+                        'present' => $present,
+                        'total' => $total
                     ];
                 });
+
+                // Add to all member attendance
+                $allMemberAttendance = array_merge($allMemberAttendance, $memberAttendance->toArray());
+
+                // Weekday analysis for this eschool
+                $weekdayAnalysis = AttendanceRecord::whereIn('user_eschool_role_id', $memberRoles->pluck('id'))
+                    ->where('date', '>=', $startDate)
+                    ->select(
+                        DB::raw('DAYOFWEEK(date) as day_of_week'),
+                        DB::raw('AVG(CASE WHEN is_present = 1 THEN 100 ELSE 0 END) as average_attendance_rate')
+                    )
+                    ->groupBy('day_of_week')
+                    ->orderBy('day_of_week')
+                    ->get()
+                    ->map(function ($item) {
+                        $days = [0 => '', 1 => 'Sunday', 2 => 'Monday', 3 => 'Tuesday', 4 => 'Wednesday', 5 => 'Thursday', 6 => 'Friday', 7 => 'Saturday'];
+                        $shortDays = [0 => '', 1 => 'Sun', 2 => 'Mon', 3 => 'Tue', 4 => 'Wed', 5 => 'Thu', 6 => 'Fri', 7 => 'Sat'];
+                        
+                        return [
+                            'day_of_week' => $days[$item->day_of_week] ?? '',
+                            'short_day' => $shortDays[$item->day_of_week] ?? '',
+                            'average_attendance_rate' => round($item->average_attendance_rate, 2)
+                        ];
+                    });
+
+                // Add to all weekday analysis (we'll average later)
+                foreach ($weekdayAnalysis as $dayAnalysis) {
+                    $dayKey = (string) $dayAnalysis['day_of_week'];
+                    if (!isset($allWeekdayAnalysis[$dayKey])) {
+                        $allWeekdayAnalysis[$dayKey] = [
+                            'day_of_week' => $dayAnalysis['day_of_week'],
+                            'short_day' => $dayAnalysis['short_day'],
+                            'average_attendance_rate' => 0,
+                            'count' => 0
+                        ];
+                    }
+                    $allWeekdayAnalysis[$dayKey]['average_attendance_rate'] += $dayAnalysis['average_attendance_rate'];
+                    $allWeekdayAnalysis[$dayKey]['count']++;
+                }
+            }
+
+            // Calculate overall attendance rate
+            $attendanceRate = $totalPossible > 0 ? round(($totalPresent / $totalPossible) * 100, 2) : 0;
+
+            // Convert daily summary to array and sort by date
+            $dailySummaryArray = array_values($allDailySummary);
+            usort($dailySummaryArray, function($a, $b) {
+                return strtotime($a['date']) - strtotime($b['date']);
+            });
+
+            // Calculate average attendance rates for members
+            // Group by member name and calculate average rates
+            $groupedMemberAttendance = [];
+            foreach ($allMemberAttendance as $member) {
+                $name = $member['name'];
+                if (!isset($groupedMemberAttendance[$name])) {
+                    $groupedMemberAttendance[$name] = [
+                        'name' => $name,
+                        'total_present' => 0,
+                        'total_possible' => 0,
+                        'count' => 0
+                    ];
+                }
+                $groupedMemberAttendance[$name]['total_present'] += $member['present'];
+                $groupedMemberAttendance[$name]['total_possible'] += $member['total'];
+                $groupedMemberAttendance[$name]['count']++;
+            }
+
+            $finalMemberAttendance = array_map(function($member) {
+                $avgRate = $member['total_possible'] > 0 ? 
+                    round(($member['total_present'] / $member['total_possible']) * 100, 2) : 0;
+                return [
+                    'name' => $member['name'],
+                    'attendance_rate' => $avgRate,
+                    'present' => $member['total_present'],
+                    'total' => $member['total_possible']
+                ];
+            }, $groupedMemberAttendance);
+
+            // Sort by attendance rate descending
+            usort($finalMemberAttendance, function($a, $b) {
+                return $b['attendance_rate'] <=> $a['attendance_rate'];
+            });
+
+            // Calculate average weekday analysis
+            $finalWeekdayAnalysis = array_map(function($day) {
+                return [
+                    'day_of_week' => $day['day_of_week'],
+                    'short_day' => $day['short_day'],
+                    'average_attendance_rate' => $day['count'] > 0 ? 
+                        round($day['average_attendance_rate'] / $day['count'], 2) : 0
+                ];
+            }, array_values($allWeekdayAnalysis));
+
+            // Sort by day of week order
+            $dayOrder = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            usort($finalWeekdayAnalysis, function($a, $b) use ($dayOrder) {
+                $indexA = array_search($a['day_of_week'], $dayOrder);
+                $indexB = array_search($b['day_of_week'], $dayOrder);
+                // Handle case where day might not be found in the array
+                if ($indexA === false) $indexA = 999;
+                if ($indexB === false) $indexB = 999;
+                return $indexA <=> $indexB;
+            });
 
             $analytics = [
                 'overall' => [
-                    'total_members' => $memberRoles->count(),
+                    'total_members' => $totalMembers,
                     'total_present' => $totalPresent,
                     'total_possible' => $totalPossible,
                     'attendance_rate' => $attendanceRate
                 ],
-                'daily_summary' => $dailySummary,
-                'member_attendance' => $memberAttendance->take(10), // Top 10 members
-                'weekday_analysis' => $weekdayAnalysis
+                'daily_summary' => array_values($dailySummaryArray),
+                'member_attendance' => array_slice(array_values($finalMemberAttendance), 0, 10), // Top 10 members
+                'weekday_analysis' => array_values($finalWeekdayAnalysis)
             ];
 
             return response()->json([
@@ -430,6 +578,7 @@ class DashboardController extends Controller
             ], 200);
 
         } catch (\Exception $e) {
+            \Log::error('Error in getAttendanceAnalytics: ' . $e->getMessage() . ' in ' . $e->getFile() . ' on line ' . $e->getLine());
             return response()->json([
                 'message' => 'Error retrieving attendance analytics',
                 'error' => $e->getMessage()
@@ -913,7 +1062,7 @@ class DashboardController extends Controller
             $totalPresent = 0;
             $totalAbsent = 0;
             $totalLate = 0;
-            $attendanceRate = 0;
+            $averageAttendanceRate = 0;
 
             // Get attendance data for each eschool
             foreach ($eschools as $eschool) {
@@ -924,13 +1073,19 @@ class DashboardController extends Controller
                 $attendanceRecords = AttendanceRecord::whereIn('user_eschool_role_id', $memberRoles)->get();
                 
                 $totalAttendanceRecords += $attendanceRecords->count();
-                $totalPresent += $attendanceRecords->where('status', 'present')->count();
-                $totalAbsent += $attendanceRecords->where('status', 'absent')->count();
-                $totalLate += $attendanceRecords->where('status', 'late')->count();
+                $totalPresent += $attendanceRecords->where('is_present', true)->count();
+                $totalAbsent += $attendanceRecords->where('is_present', false)->count();
+                
+                // Count late records by checking notes for "terlambat" or "late"
+                foreach ($attendanceRecords as $record) {
+                    if (!$record->is_present && $record->notes && (stripos($record->notes, 'terlambat') !== false || stripos($record->notes, 'late') !== false)) {
+                        $totalLate++;
+                    }
+                }
             }
             
             if ($totalAttendanceRecords > 0) {
-                $attendanceRate = round(($totalPresent / $totalAttendanceRecords) * 100, 2);
+                $averageAttendanceRate = round(($totalPresent / $totalAttendanceRecords) * 100, 2);
             }
 
             $analytics = [
@@ -938,12 +1093,13 @@ class DashboardController extends Controller
                 'totalPresent' => $totalPresent,
                 'totalAbsent' => $totalAbsent,
                 'totalLate' => $totalLate,
-                'attendanceRate' => $attendanceRate
+                'averageAttendanceRate' => $averageAttendanceRate
             ];
 
             return response()->json($analytics, 200);
 
         } catch (\Exception $e) {
+            \Log::error('Error retrieving attendance analytics: ' . $e->getMessage());
             return response()->json([
                 'message' => 'Error retrieving attendance analytics',
                 'error' => $e->getMessage()
