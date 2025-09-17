@@ -3,51 +3,54 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\DB;
-use App\Models\Eschool;
-use App\Models\Member;
-
+use App\Models\UserEschoolRole;
 
 class MemberController extends Controller
 {
     /**
      * Display a listing of the resource.
      */
-    public function index(Request $request)
+    public function index()
     {
-        try {
-            $eschoolId = $request->input('eschool_id');
-            // Ambil members yang aktif
-            $eschool = Eschool::where('id', $eschoolId)->firstOrFail();
-            
+        //
+    }
+    public function getMembersByEschool(Request $request, $eschoolId)
+    {
+        \Log::info("INI ESCHOOL ID ".$eschoolId);
 
-            $members = Member::with('user')
-                ->where('eschool_id', $eschool->id)
-                ->where('is_active', true)
+        try {
+            // Get members with role 'member' or 'treasurer' for the specified eschool
+            // Both members and treasurers should be included as they can make payments
+            $members = \App\Models\UserEschoolRole::where('eschool_id', $eschoolId)
+                ->whereIn('role', ['member', 'treasurer'])
+                ->with(['user.profile', 'eschool'])
                 ->get()
-                ->map(function ($member) {
+                ->map(function ($userEschoolRole) {
                     return [
-                        'id' => $member->id,
-                        'student_id' => $member->student_id,
-                        'name' => $member->user ? $member->user->name : 'N/A',
-                        'email' => $member->user ? $member->user->email : 'N/A',
-                        'phone' => $member->phone,
+                        'id' => $userEschoolRole->user->id,
+                        'name' => $userEschoolRole->user->name,
+                        'email' => $userEschoolRole->user->email,
+                        'profile' => $userEschoolRole->user->profile,
+                        'eschool_role_id' => $userEschoolRole->id,
+                        'eschool_id' => $userEschoolRole->eschool_id,
+                        'eschool_name' => $userEschoolRole->eschool ? $userEschoolRole->eschool->name : null,
+                        'created_at' => $userEschoolRole->created_at,
+                        'updated_at' => $userEschoolRole->updated_at
                     ];
                 });
 
+            // Get the eschool details
+            $eschool = \App\Models\Eschool::find($eschoolId);
+
             return response()->json([
-                'eschool' => [
-                    'id' => $eschool->id,
-                    'name' => $eschool->name,
-                    'monthly_kas_amount' => $eschool->monthly_kas_amount,
-                ],
-                'members' => $members,
-            ]);
+                'message' => 'Members retrieved successfully',
+                'eschool' => $eschool,
+                'members' => $members
+            ], 200);
         } catch (\Exception $e) {
             return response()->json([
-                'message' => 'Error occurred',
-                'error' => $e->getMessage()
+                'error' => 'Failed to retrieve members',
+                'message' => $e->getMessage()
             ], 500);
         }
     }
@@ -99,4 +102,7 @@ class MemberController extends Controller
     {
         //
     }
+
+
+    
 }

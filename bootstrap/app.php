@@ -23,6 +23,7 @@ return Application::configure(basePath: dirname(__DIR__))
         // Register middleware alias
         $middleware->alias([
             'role' => \App\Http\Middleware\CheckRole::class,
+            'eschool.role' => \App\Http\Middleware\CheckEschoolRole::class,
             'auth' => \App\Http\Middleware\Authenticate::class,
             'jwt.cookie' => \App\Http\Middleware\JWTFromCookie::class,
             'auth.basic' => \Illuminate\Auth\Middleware\AuthenticateWithBasicAuth::class,
@@ -50,8 +51,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->group('api', [
             \App\Http\Middleware\EncryptCookies::class, // Add custom EncryptCookies to API
             \App\Http\Middleware\JWTFromCookie::class, // JWT from cookie middleware
+            \App\Http\Middleware\DebugMultipartData::class, // Debug multipart data
             // EnsureFrontendRequestsAreStateful::class, // Removed - using JWT now
-            // ThrottleRequests::class . ':api', // Sementara dikomentari
+            ThrottleRequests::class . ':api', // Enable API rate limiting
             SubstituteBindings::class,
         ]);
     })

@@ -2,14 +2,30 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use App\Models\KasRecord;
+use App\Models\UserEschoolRole;
 
 class KasPayment extends Model
 {
+    use HasFactory;
+
+    /**
+     * The table associated with the model.
+     *
+     * @var string
+     */
+    protected $table = 'kas_payment';
+
+    /**
+     * The attributes that are mass assignable.
+     *
+     * @var array<int, string>
+     */
     protected $fillable = [
-        'member_id',
         'kas_record_id',
+        'member_id',
         'amount',
         'month',
         'year',
@@ -17,22 +33,30 @@ class KasPayment extends Model
         'paid_date',
     ];
 
+    /**
+     * The attributes that should be cast.
+     *
+     * @var array<string, string>
+     */
     protected $casts = [
-        'amount' => 'integer',
-        'month' => 'integer',
-        'year' => 'integer',
+        'amount' => 'decimal:2',
         'is_paid' => 'boolean',
-        'paid_date' => 'datetime',
-        'payment_date' => 'datetime',
+        'paid_date' => 'date',
     ];
 
-    public function member(): BelongsTo
-    {
-        return $this->belongsTo(Member::class);
-    }
-
-    public function kasRecord(): BelongsTo
+    /**
+     * Get the kas record that owns the kas payment.
+     */
+    public function kasRecord()
     {
         return $this->belongsTo(KasRecord::class);
+    }
+
+    /**
+     * Get the user eschool role (member) that owns the kas payment.
+     */
+    public function member()
+    {
+        return $this->belongsTo(UserEschoolRole::class, 'member_id');
     }
 }

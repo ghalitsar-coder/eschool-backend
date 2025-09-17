@@ -2,33 +2,35 @@
 
 namespace App\Models;
 
-// use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Tymon\JWTAuth\Contracts\JWTSubject;
+use App\Models\Profile;
+use App\Models\Student;
+use App\Models\Teacher;
+use App\Models\UserEschoolRole;
 
 class User extends Authenticatable implements JWTSubject
 {
-    /** @use HasFactory<\Database\Factories\UserFactory> */
     use HasFactory, Notifiable;
 
     /**
      * The attributes that are mass assignable.
      *
-     * @var list<string>
+     * @var array<int, string>
      */
     protected $fillable = [
+        'profile_id',
         'name',
         'email',
         'password',
-        'role',
     ];
 
     /**
      * The attributes that should be hidden for serialization.
      *
-     * @var list<string>
+     * @var array<int, string>
      */
     protected $hidden = [
         'password',
@@ -48,87 +50,103 @@ class User extends Authenticatable implements JWTSubject
         ];
     }
 
-    // Scope untuk masing-masing role
-    public function scopeSiswa($query)
+    /**
+     * Get the profile associated with the user.
+     */
+    public function profile()
     {
-        return $query->where('role', 'siswa');
+        return $this->belongsTo(Profile::class);
     }
 
-    public function scopeBendahara($query)
+    /**
+     * Get the user eschool roles for the user.
+     */
+    public function userEschoolRoles()
     {
-        return $query->where('role', 'bendahara');
+        return $this->hasMany(UserEschoolRole::class);
     }
 
-    public function scopeKoordinator($query)
+    /**
+     * Get the student record through the profile.
+     */
+    public function student()
     {
-        return $query->where('role', 'koordinator');
+        return $this->hasOneThrough(Student::class, Profile::class, 'id', 'profile_id', 'profile_id', 'id');
     }
 
-    public function scopeStaff($query)
+    /**
+     * Get the teacher record through the profile.
+     */
+    public function teacher()
     {
-        return $query->where('role', 'staff');
+        return $this->hasOneThrough(Teacher::class, Profile::class, 'id', 'profile_id', 'profile_id', 'id');
     }
 
-    // Method checker untuk masing-masing role
-    public function isSiswa()
-    {
-        return $this->role === 'siswa';
-    }
-
-    public function isBendahara()
-    {
-        return $this->role === 'bendahara';
-    }
-
-    public function isKoordinator()
-    {
-        return $this->role === 'koordinator';
-    }
-
-    public function isStaff()
-    {
-        return $this->role === 'staff';
-    }
-
-    // Method untuk check multiple roles
-    public function hasRole($roles)
-    {
-        if (is_array($roles)) {
-            return in_array($this->role, $roles);
-        }
-        
-        return $this->role === $roles;
-    }
-
-    // JWT Methods
+    /**
+     * Get the identifier that will be stored in the subject claim of the JWT.
+     *
+     * @return mixed
+     */
     public function getJWTIdentifier()
     {
         return $this->getKey();
     }
 
+    /**
+     * Return a key value array, containing any custom claims to be added to the JWT.
+     *
+     * @return array
+     */
     public function getJWTCustomClaims()
     {
-        return [
-            'role' => $this->role,
-            'email' => $this->email,
-        ];
+        return [];
     }
-    public function eschool()
+
+     /**
+     * Check if user has specific role(s)
+     *
+     * @param string|array $roles
+     * @return bool
+     */
+    public function hasRole($roles)
     {
-        return $this->hasOne(Eschool::class);
+        // Ensure userEschoolRoles relation is loaded
+        if (!$this->relationLoaded('userEschoolRoles')) {
+            $this->load('userEschoolRoles');
+        }
+        
+        // Get user's roles from user_eschool_roles table
+        $userRoles = $this->userEschoolRoles->pluck('role')->toArray();
+        
+        if (is_array($roles)) {
+            // Check if user has any of the specified roles
+            return !empty(array_intersect($roles, $userRoles));
+        }
+        
+        // Check if user has the specific role
+        return in_array($roles, $userRoles);
     }
 
-    public function member()
-        {
-            return $this->hasOne(Member::class);
+    /**
+     * Get the school_id for supervisor users.
+     *
+     * @return int|null
+     */
+    public function getSchoolIdAttribute()
+    {
+        // Cek apakah user memiliki role supervisor
+        // Kita asumsikan role supervisor bisa ada di banyak eschool, 
+        // tapi kita ambil school_id dari teacher profile
+        if ($this->hasRole('supervisor')) {
+            // Pastikan relasi teacher sudah di-load untuk efisiensi
+            if (!$this->relationLoaded('teacher')) {
+                $this->load('teacher');
+            }
+            
+            // Kembalikan school_id dari teacher jika ada
+            return $this->teacher ? $this->teacher->school_id : null;
         }
-    public function coordinatedEschool()
-        {
-            return $this->hasOne(Eschool::class, 'coordinator_id');
-        }
-
-    public function treasurerEschool()
-        {
-            return $this->hasOne(Eschool::class, 'treasurer_id');
-        }
+        
+        return null; // Bukan supervisor
+    }
 }

@@ -1,150 +1,131 @@
 <?php
 
-use App\Http\Controllers\AuthController;
-use App\Http\Controllers\KasController;
+use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\MultiRoleProfileController;
+use App\Http\Controllers\Api\KasRecordController;
+use App\Http\Controllers\Api\KasPaymentController;
+use App\Http\Controllers\Api\PaymentStatisticsController;
+use App\Http\Controllers\Api\ProfileController;
+use App\Http\Controllers\Api\AttendanceController;
+use App\Http\Controllers\MembersController;
 use App\Http\Controllers\MemberController;
-use App\Http\Controllers\AttendanceController;
+use App\Http\Controllers\Api\UserController; // Add this line
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
-Route::get('/test', function () {
-    return response()->json(['message' => 'API Route Working!']);
-});
-Route::post('/test-login', function (Request $request) {
-    return response()->json([
-        'message' => 'Test login endpoint',
-        'data_received' => $request->all()
-    ]);
-});
+/*
+|--------------------------------------------------------------------------
+| API Routes
+|--------------------------------------------------------------------------
+|
+| Here is where you can register API routes for your application. These
+| routes are loaded by the RouteServiceProvider and all of them will
+| be assigned to the "api" middleware group. Make something great!
+|
+*/
 
-// Public routes
-Route::post('/login', [AuthController::class, 'login']);
+// Public routes for authentication
 Route::post('/register', [AuthController::class, 'register']);
+Route::post('/login', [AuthController::class, 'login']);
 Route::post('/refresh', [AuthController::class, 'refresh']); // Refresh token endpoint
-
-// Debug route untuk test token
-Route::get('/debug-token', function (Request $request) {
-    return response()->json([
-        'cookies' => $request->cookies->all(),
-        'headers' => $request->headers->all(),
-        'token_from_cookie' => $request->cookie('token'),
-        'bearer_token' => $request->bearerToken(),
-        'auth_header' => $request->header('Authorization'),
-    ]);
-});
 
 // Protected routes
 Route::middleware('auth:api')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
-    Route::get('/user', function (Request $request) {
-        return response()->json([
-            'user' => $request->user(),
-            'role' => $request->user()->role
-        ]);
+    Route::get('/me', [AuthController::class, 'me']);
+    
+    // Profile routes
+    Route::get('/member/profile', [ProfileController::class, 'getProfile']);
+    Route::get('/multi-role/profile', [MultiRoleProfileController::class, 'getMultiRoleProfile']);
+    
+    // User management routes
+    Route::post('/users', [UserController::class, 'createUser']);
+    
+    // Eschool management routes
+    Route::get('/eschools', [App\Http\Controllers\Api\EschoolController::class, 'index']);
+    Route::get('/eschools/{id}', [App\Http\Controllers\Api\EschoolController::class, 'show']);
+    Route::post('/eschools', [App\Http\Controllers\Api\EschoolController::class, 'store']);
+    Route::put('/eschools/{id}', [App\Http\Controllers\Api\EschoolController::class, 'update']);
+    Route::delete('/eschools/{id}', [App\Http\Controllers\Api\EschoolController::class, 'destroy']);
+    Route::get('/eschools/users/coordinators', [App\Http\Controllers\Api\EschoolController::class, 'getEligibleCoordinators']);
+    
+    // Supervisor routes
+    Route::prefix('supervisor')->group(function () {
+        Route::get('/eligible-treasurers', [App\Http\Controllers\Api\SupervisorController::class, 'getEligibleTreasurers']);
+        Route::get('/eligible-coordinators', [App\Http\Controllers\Api\SupervisorController::class, 'getEligibleCoordinators']);
     });
     
-    // Routes khusus siswa
-    Route::middleware(['role:siswa'])->group(function () {
-        Route::get('/siswa/dashboard', function () {
-            return response()->json([
-                'message' => 'Welcome to Siswa Dashboard',
-                'access' => 'Siswa-specific content'
-            ]);
-        });
-    });
-
-
-    Route::middleware('role:bendahara,koordinator')->group(function () {
-        Route::get('/members', [MemberController::class, 'index']);
-    });
-
-    // Routes khusus bendahara
-    Route::middleware('role:bendahara,koordinator')->group(function () {
-        Route::get('/bendahara/dashboard', function () {
-            return response()->json([
-                'message' => 'Welcome to Bendahara Dashboard',
-                'access' => 'Financial management tools'
-            ]);
-        });
-        
-        // Kas management routes
-        // Endpoint lain seperti /kas/income, /members
-        Route::get('/kas/check-payment', [KasController::class, 'checkPayment']);
-        Route::get('/kas/summary', [KasController::class, 'getSummary']);
-        Route::get('/kas/records', [KasController::class, 'getKasRecords']);
-        Route::post('/kas/income', [KasController::class, 'storeIncome']);
-        Route::post('/kas/expense', [KasController::class, 'storeExpense']);
-    });
-
-   
-    // Routes khusus koordinator
-   Route::middleware( 'role:koordinator')->group(function () {
+    // Dashboard routes
+    Route::get('/dashboard/multi-role-profile', [App\Http\Controllers\Api\DashboardController::class, 'getMultiRoleProfile']);
+    Route::get('/dashboard/attendance/statistics', [App\Http\Controllers\Api\DashboardController::class, 'getAttendanceStatistics']);
+    Route::get('/dashboard/attendance/analytics', [App\Http\Controllers\Api\DashboardController::class, 'getAttendanceAnalytics']);
+    Route::get('/dashboard/kas/summary', [App\Http\Controllers\Api\DashboardController::class, 'getKasSummary']);
     
-    Route::get('/koordinator/dashboard', function () {
-        return response()->json([
-            'message' => 'Welcome to Koordinator Dashboard',
-            'access'  => 'Coordination tools'
-        ]);
-    });
+    // Analytics routes
+    Route::get('/analytics/eschools', [App\Http\Controllers\Api\DashboardController::class, 'getEschoolAnalytics']);
+    Route::get('/analytics/financial', [App\Http\Controllers\Api\DashboardController::class, 'getFinancialAnalytics']);
+    Route::get('/analytics/attendance', [App\Http\Controllers\Api\DashboardController::class, 'getAttendanceAnalyticsData']);
 
-    Route::get('/koordinator/activities', function () {
-        return response()->json(['message' => 'Activity management']);
-    });
-
-    Route::prefix('attendance')->group(function () {
-        // Get members for attendance taking
-        // Route::get('members/{eschool_id}', [MemberController::class, 'index']);
-        
-        Route::get('members/available', [AttendanceController::class, 'available']);
-        // Record attendance
-        Route::post('record', [AttendanceController::class, 'store']);
-        
-        // Get attendance records
-        Route::get('records', [AttendanceController::class, 'index']);
-        Route::get('records/{attendance}', [AttendanceController::class, 'show']);
-        
-        // Update/Delete attendance
-        Route::put('records/{attendance}', [AttendanceController::class, 'update']);
-        Route::delete('records/{attendance}', [AttendanceController::class, 'destroy']);
-
-        Route::get('statistics', [AttendanceController::class, 'AttendanceStatistics']);
-    });
-});
-
-    // Routes khusus staff
-    Route::middleware('role:staff')->group(function () {
-        Route::get('/staff/dashboard', function () {
-            return response()->json([
-                'message' => 'Welcome to Staff Dashboard',
-                'access' => 'Staff administration tools'
-                  ]);
-        });
-        
-        Route::get('/staff/tasks', function () {
-            return response()->json(['message' => 'Staff tasks management']);
+    
+    // Member management routes (new)
+    Route::middleware(['eschool.role:coordinator,treasurer'])->group(function () {
+        Route::prefix('members')->group(function () {
+            Route::get('/eschool', [App\Http\Controllers\MembersController::class, 'getMembers']);
+            Route::get('/manage', [App\Http\Controllers\Api\MemberManagementController::class, 'getMembers']);
+            Route::get('/available-for-eschool', [App\Http\Controllers\Api\MemberManagementController::class, 'getAvailableUsers']);
+            Route::post('/assign-role', [App\Http\Controllers\Api\MemberManagementController::class, 'assignRole']);
+            Route::put('/{userId}/update-role', [App\Http\Controllers\Api\MemberManagementController::class, 'updateRole']);
+            Route::delete('/{userId}/remove-role', [App\Http\Controllers\Api\MemberManagementController::class, 'removeRole']);
         });
     });
-
-    // Route untuk multiple roles (bendahara dan koordinator)
-    Route::middleware('role:bendahara,koordinator')->group(function () {
-        Route::get('/management/reports', function () {
-            return response()->json(['message' => 'Management reports accessed']);
-        });
+    // Kas management routes
+    // Kas Record routes
+    Route::post('/kas/records', [KasRecordController::class, 'store']);
+    Route::post('/kas/income', [KasRecordController::class, 'storeIncomeWithPayments']);
+    Route::get('/kas/records/{eschoolId}', [KasRecordController::class, 'index']);
+    Route::put('/kas/records/{id}', [KasRecordController::class, 'update']);
+    Route::delete('/kas/records/{id}', [KasRecordController::class, 'destroy']);
+    Route::get('/kas/export/{eschoolId}', [KasRecordController::class, 'export']);
+    
+    // Kas Payment routes
+    Route::post('/kas/payments', [KasPaymentController::class, 'store']);
+    Route::get('/kas/payments/member/{userEschoolRoleId}', [KasPaymentController::class, 'getMemberPayments']);
+    Route::get('/kas/payments/summary/{eschoolId}', [KasPaymentController::class, 'getEschoolPaymentSummary']);
+    Route::put('/kas/payments/{id}', [KasPaymentController::class, 'update']);
+    
+    // Payment Statistics routes
+    Route::get('/eschools/{eschoolId}/payment-statistics', [PaymentStatisticsController::class, 'getEschoolPaymentStatistics']);
+    Route::get('/members/{memberId}/payment-details', [PaymentStatisticsController::class, 'getMemberPaymentDetails']);
+    Route::get('/members/{memberId}/payments/{month}/{year}', [PaymentStatisticsController::class, 'getMemberPeriodPayments']);
+    
+    // Eschool-scoped attendance management routes
+    Route::prefix('eschool')->group(function () {
         
-        Route::get('/management/analytics', function () {
-            return response()->json(['message' => 'Analytics dashboard']);
+        // Members list route for attendance system
+        Route::get('/members/list', [MembersController::class, 'list']);
+        
+        // Attendance CRUD routes
+        Route::prefix('attendance')->group(function () {
+            // List attendance records with filtering and pagination
+            Route::get('/records', [AttendanceController::class, 'index']);
+            
+            // Create attendance records (with file upload support) - frontend expects /record
+            Route::post('/record', [AttendanceController::class, 'store']);
+            Route::post('/records', [AttendanceController::class, 'store']);
+            
+            // Individual attendance record management
+            Route::get('/records/{id}', [AttendanceController::class, 'show']);
+            Route::put('/records/{id}', [AttendanceController::class, 'update']);
+            Route::post('/records/{id}', [AttendanceController::class, 'update']); // For method spoofing with FormData
+            Route::delete('/records/{id}', [AttendanceController::class, 'destroy']);
+            
+            // Statistics and analytics
+            Route::get('/statistics', [AttendanceController::class, 'statistics']);
+            Route::get('/analytics', [AttendanceController::class, 'analytics']);
+            
+            // Export functionality
+            Route::get('/export/csv', [AttendanceController::class, 'exportCsv']);
+            Route::get('/export/pdf', [AttendanceController::class, 'exportPdf']);
         });
     });
-
-    // Route untuk testing semua roles
-    Route::get('/test/role-access', function (Request $request) {
-        return response()->json([
-            'message' => 'Role access test successful',
-            'user_role' => $request->user()->role,
-            'is_siswa' => $request->user()->isSiswa(),
-            'is_bendahara' => $request->user()->isBendahara(),
-            'is_koordinator' => $request->user()->isKoordinator(),
-            'is_staff' => $request->user()->isStaff(),
-        ]);
-    })->middleware('role:siswa,bendahara,koordinator,staff');
 });

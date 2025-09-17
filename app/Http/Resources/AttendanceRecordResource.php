@@ -14,6 +14,14 @@ class AttendanceRecordResource extends JsonResource
             'is_present' => (bool) $this->is_present,
             'notes'      => $this->notes,
             
+            // Proof document information
+            'proof_document' => $this->when($this->proof_document_path, [
+                'name' => $this->proof_document_name,
+                'type' => $this->proof_document_type,
+                'size' => $this->proof_document_size,
+                'url'  => $this->proof_document_url,
+            ]),
+            
             // hanya ambil field yang relevan dari member
             'member' => [
                 'id'         => $this->member->id,

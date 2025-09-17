@@ -2,46 +2,68 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
+use App\Models\Eschool;
+use App\Models\KasPayment;
+use App\Models\UserEschoolRole;
 
 class KasRecord extends Model
 {
+    use HasFactory;
+
+    /**
+     * The table associated with the model.
+     *
+     * @var string
+     */
+    protected $table = 'kas_record';
+
+    /**
+     * The attributes that are mass assignable.
+     *
+     * @var array<int, string>
+     */
     protected $fillable = [
         'eschool_id',
-        'recorder_id',
-        'type',
-        'amount',
         'description',
+        'category',
+        'amount',
         'date',
+        'recorder_id',
     ];
 
+    /**
+     * The attributes that should be cast.
+     *
+     * @var array<string, string>
+     */
     protected $casts = [
-        'amount' => 'integer',
-        'date' => 'datetime',
+        'amount' => 'decimal:2',
+        'date' => 'date',
     ];
 
-    public function eschool(): BelongsTo
+    /**
+     * Get the eschool that owns the kas record.
+     */
+    public function eschool()
     {
         return $this->belongsTo(Eschool::class);
     }
 
-    public function recorder(): BelongsTo
-    {
-        return $this->belongsTo(User::class, 'recorder_id');
-    }
-
-
-
-    public function kasPayments(): HasMany
+    /**
+     * Get the kas payments for the kas record.
+     */
+    public function kasPayments()
     {
         return $this->hasMany(KasPayment::class);
     }
 
-    // Alias for easier access
-    public function payments(): HasMany
+    /**
+     * Get the recorder (user eschool role) that created the kas record.
+     */
+    public function recorder()
     {
-        return $this->hasMany(KasPayment::class);
+        return $this->belongsTo(UserEschoolRole::class, 'recorder_id');
     }
 }

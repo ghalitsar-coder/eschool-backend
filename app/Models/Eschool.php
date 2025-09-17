@@ -2,52 +2,69 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
+use App\Models\School;
+use App\Models\UserEschoolRole;
+use App\Models\AttendanceRecord;
+use App\Models\KasRecord;
 
 class Eschool extends Model
 {
+    use HasFactory;
+
+    /**
+     * The attributes that are mass assignable.
+     *
+     * @var array<int, string>
+     */
     protected $fillable = [
         'school_id',
-        'coordinator_id',
-        'treasurer_id',
         'name',
-        'description',
-        'monthly_kas_amount',
         'schedule_days',
-        'total_schedule_days',
+        'description',
         'is_active',
+        'monthly_fee_amount',
     ];
 
+    /**
+     * The attributes that should be cast.
+     *
+     * @var array<string, string>
+     */
     protected $casts = [
-        'schedule_days' => 'array',
         'is_active' => 'boolean',
-        'monthly_kas_amount' => 'integer',
-        'total_schedule_days' => 'integer',
+        'monthly_fee_amount' => 'decimal:2',
     ];
 
-    public function school(): BelongsTo
+    /**
+     * Get the school that owns the eschool.
+     */
+    public function school()
     {
         return $this->belongsTo(School::class);
     }
 
-    public function coordinator(): BelongsTo
+    /**
+     * Get the user eschool roles for the eschool.
+     */
+    public function userEschoolRoles()
     {
-        return $this->belongsTo(User::class, 'coordinator_id');
+        return $this->hasMany(UserEschoolRole::class);
     }
 
-    public function treasurer(): BelongsTo
+    /**
+     * Get the attendance records for the eschool.
+     */
+    public function attendanceRecords()
     {
-        return $this->belongsTo(User::class, 'treasurer_id');
+        return $this->hasMany(AttendanceRecord::class);
     }
 
-    public function members(): HasMany
-    {
-        return $this->hasMany(Member::class);
-    }
-
-    public function kasRecords(): HasMany
+    /**
+     * Get the kas records for the eschool.
+     */
+    public function kasRecords()
     {
         return $this->hasMany(KasRecord::class);
     }
